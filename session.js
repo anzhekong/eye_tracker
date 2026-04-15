@@ -22,6 +22,7 @@ const SessionManager = (() => {
   // ── Session state ──
   let activeSession   = null;
   let sampleInterval  = null;
+  let displayInterval = null; // fast 1s refresh for live UI
   let timerInterval   = null;
   let sessionSettings = { blink: true, head: true, threshold: 6 };
 
@@ -429,7 +430,21 @@ const SessionManager = (() => {
       if (camTimer) camTimer.textContent = str;
     }, 1000);
 
-    // Focus sampling — every 10s record a data point
+    // ── Fast display refresh (every 1s) ──
+    // Updates the live stats panel continuously so the user sees
+    // real-time values, not values frozen for 10 seconds at a time.
+    // Uses the current accumulated eye moves since the last 10s sample,
+    // plus live blink rate and head score from the tracker.
+    displayInterval = setInterval(() => {
+      if (!activeSession) return;
+      const blinkRate = Tracker.getBlinkRate();
+      const headScore = Tracker.getHeadScore();
+      // Calculate a live score from moves accumulated since last sample
+      const liveScore = calcFocusScore(sampleEyeMoves, blinkRate, headScore);
+      updateLiveUI(liveScore, Tracker.currentDir, blinkRate, headScore);
+    }, 1000);
+
+    // Focus sampling — every 10s record a data point to the timeline
     sampleInterval = setInterval(() => {
       if (!activeSession) return;
       const t          = activeSession.duration;
@@ -456,9 +471,6 @@ const SessionManager = (() => {
       sampleEyeMoves = 0;
       sampleBlinks   = 0;
 
-      // Update live UI
-      updateLiveUI(score, Tracker.currentDir, blinkRate, headScore);
-
     }, SAMPLE_INTERVAL_MS);
   }
 
@@ -470,9 +482,11 @@ const SessionManager = (() => {
 
     // Stop timers
     clearInterval(sampleInterval);
+    clearInterval(displayInterval);
     clearInterval(timerInterval);
-    sampleInterval = null;
-    timerInterval  = null;
+    sampleInterval  = null;
+    displayInterval = null;
+    timerInterval   = null;
 
     // Hide session timer overlay
     const sessionTimerEl = document.getElementById('sessionTimer');
