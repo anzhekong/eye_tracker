@@ -246,16 +246,21 @@ const Tracker = (() => {
     const avgEAR    = computeEAR(lms);
     const vertRatio = getVertGazeRatio(lms);
 
-    // Debug strip
-    const dr = document.getElementById('dbgRatio');
-    const de = document.getElementById('dbgEar');
-    const db = document.getElementById('dbgBlock');
-    if (dr) { dr.textContent = vertRatio.toFixed(3); dr.style.color = vertRatio>0.08?'#fb923c':vertRatio<-0.08?'#f472b6':'#00e5c3'; }
-    if (de) de.textContent = avgEAR.toFixed(3);
+    // Debug strip — update desktop and mobile elements
+    function dbg(id, text, color) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text;
+      if (color) el.style.color = color;
+    }
+    const ratioColor = vertRatio > 0.08 ? '#fb923c' : vertRatio < -0.08 ? '#f472b6' : '#00e5c3';
+    dbg('dbgRatio', vertRatio.toFixed(3), ratioColor);
+    dbg('dbgEar',   avgEAR.toFixed(3));
 
     // Blink classification
     const isBlink = opts.blink ? classifyBlink(avgEAR, vertRatio) : false;
-    if (db) db.textContent = isBlink ? blinkState : 'none';
+    const blinkText = isBlink ? blinkState : 'none';
+    dbg('dbgBlock', blinkText);
 
     if (isBlink) {
       _setStatus('BLINK', true);
@@ -302,10 +307,14 @@ const Tracker = (() => {
   }
 
   function _setStatus(text, active) {
-    const pill = document.getElementById('statusPill');
-    const span = document.getElementById('statusText');
-    if (span) span.textContent = text;
-    if (pill) pill.classList.toggle('active', active);
+    ['statusPill','m-statusPill'].forEach(id => {
+      const pill = document.getElementById(id);
+      if (pill) pill.classList.toggle('active', active);
+    });
+    ['statusText','m-statusText'].forEach(id => {
+      const span = document.getElementById(id);
+      if (span) span.textContent = text;
+    });
   }
 
   // ── Public API ──

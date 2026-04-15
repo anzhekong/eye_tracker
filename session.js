@@ -201,13 +201,26 @@ const SessionManager = (() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // UI helpers — show/hide screens
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Helper: set a value + color on an element by ID (safe, no-op if missing) ──
+  function setEl(id, text, color) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (text  !== undefined) el.textContent = text;
+    if (color !== undefined) el.style.color = color;
+  }
+
+  // ── Show the right screen on BOTH desktop and mobile ──
   function showScreen(id) {
+    // Desktop screens
     ['screenIdle','screenActive','screenReport'].forEach(s => {
       const el = document.getElementById(s);
       if (el) el.classList.toggle('active', s === id);
+    });
+    // Mobile screens (prefixed with m-)
+    ['m-screenIdle','m-screenActive','m-screenReport'].forEach(s => {
+      const el = document.getElementById(s);
+      const matches = s === 'm-' + id;
+      if (el) el.classList.toggle('active', matches);
     });
   }
 
@@ -224,42 +237,39 @@ const SessionManager = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Live UI update during active session
+  // Live UI — updates BOTH desktop and mobile elements every 0.5s
   // ─────────────────────────────────────────────────────────────────────────
   function updateLiveUI(score, dir, blinkRate, headScore) {
-    const focusEl = document.getElementById('liveFocusScore');
-    const gazeEl  = document.getElementById('liveGazDir');
-    const blinkEl = document.getElementById('liveBlinkRate');
-    const headEl  = document.getElementById('liveHeadScore');
-    const barEl   = document.getElementById('focusBarFill');
+    const focusColor = score >= 70 ? 'var(--green)' : score >= 40 ? 'var(--yellow)' : 'var(--red)';
+    const DIR_META   = { '← Left':'← L', '→ Right':'→ R', '● Center':'●', '↑ Up':'↑', '↓ Down':'↓' };
+    const dirText    = DIR_META[dir] || '—';
+    const blinkColor = blinkRate === null ? 'var(--teal)'
+      : (blinkRate>=6 && blinkRate<=20) ? 'var(--green)' : blinkRate>25 ? 'var(--red)' : 'var(--yellow)';
+    const headColor  = headScore === null ? 'var(--teal)'
+      : headScore < 0.5 ? 'var(--green)' : headScore < 1.5 ? 'var(--yellow)' : 'var(--red)';
 
-    if (focusEl) {
-      focusEl.textContent = score + '%';
-      focusEl.style.color = score >= 70 ? 'var(--green)' : score >= 40 ? 'var(--yellow)' : 'var(--red)';
-    }
+    // Desktop elements
+    setEl('liveFocusScore', score + '%', focusColor);
+    setEl('liveGazDir',     dirText);
+    setEl('liveBlinkRate',  blinkRate !== null ? String(blinkRate) : '—', blinkColor);
+    setEl('liveHeadScore',  headScore !== null ? headScore.toFixed(1) : '—', headColor);
+    const bar = document.getElementById('focusBarFill');
+    if (bar) { bar.style.width = score + '%'; bar.style.background = focusColor; }
 
-    const DIR_META = {
-      '← Left':   '← L', '→ Right': '→ R', '● Center': '●',
-      '↑ Up':     '↑',   '↓ Down':  '↓',
-    };
-    if (gazeEl) gazeEl.textContent = DIR_META[dir] || '—';
+    // Mobile elements
+    setEl('m-liveGazDir',    dirText);
+    setEl('m-liveBlinkRate', blinkRate !== null ? String(blinkRate) : '—', blinkColor);
+    setEl('m-liveHeadScore', headScore !== null ? headScore.toFixed(1) : '—', headColor);
+    const mBar = document.getElementById('m-focusBarFill');
+    if (mBar) { mBar.style.width = score + '%'; mBar.style.background = focusColor; }
 
-    if (blinkEl) {
-      blinkEl.textContent = blinkRate !== null ? blinkRate : '—';
-      if (blinkRate !== null) {
-        blinkEl.style.color = (blinkRate>=6 && blinkRate<=20) ? 'var(--green)'
-          : blinkRate > 25 ? 'var(--red)' : 'var(--yellow)';
-      }
-    }
-
-    if (headEl && headScore !== null) {
-      headEl.textContent  = headScore.toFixed(1);
-      headEl.style.color  = headScore < 0.5 ? 'var(--green)' : headScore < 1.5 ? 'var(--yellow)' : 'var(--red)';
-    }
-
-    if (barEl) {
-      barEl.style.width      = score + '%';
-      barEl.style.background = score >= 70 ? 'var(--green)' : score >= 40 ? 'var(--yellow)' : 'var(--red)';
+    // Mobile camera focus badge
+    const badge    = document.getElementById('m-focusBadge');
+    const badgeVal = document.getElementById('m-focusBadgeVal');
+    if (badge && badgeVal) {
+      badge.classList.add('visible');
+      badgeVal.textContent  = score + '%';
+      badgeVal.style.color  = focusColor;
     }
   }
 
@@ -267,36 +277,34 @@ const SessionManager = (() => {
   // History list rendering
   // ─────────────────────────────────────────────────────────────────────────
   function renderHistory() {
-    const list = document.getElementById('historyList');
-    if (!list) return;
-
     const sessions = loadSessions();
-    if (sessions.length === 0) {
-      list.innerHTML = '<div class="history-empty">No sessions recorded yet.<br>Start your first session!</div>';
-      return;
-    }
+    const html = sessions.length === 0
+      ? '<div class="history-empty">No sessions recorded yet.<br>Start your first session!</div>'
+      : sessions.map((s, idx) => {
+          const avg   = s.summary.avgFocus;
+          const badge = avg >= 70 ? 'good' : avg >= 40 ? 'ok' : 'poor';
+          return `
+            <div class="history-item" onclick="SessionManager.viewSession(${idx})">
+              <div class="hi-top">
+                <span class="hi-date">${formatDate(s.date)}</span>
+                <span class="hi-badge ${badge}">${avg}%</span>
+              </div>
+              <div class="hi-duration">
+                <span>${formatDuration(s.duration)}</span>
+                ${s.settings.blink ? ' · Blink ✓' : ''}
+                ${s.settings.head  ? ' · Head ✓'  : ''}
+              </div>
+              <canvas class="mini-chart" id="miniChart${idx}" style="width:100%;height:36px;margin-top:7px;border-radius:4px;display:block;"></canvas>
+            </div>`;
+        }).join('');
 
-    list.innerHTML = sessions.map((s, idx) => {
-      const avg     = s.summary.avgFocus;
-      const badge   = avg >= 70 ? 'good' : avg >= 40 ? 'ok' : 'poor';
-      const dateStr = formatDate(s.date);
-      const durStr  = formatDuration(s.duration);
-      return `
-        <div class="history-item" onclick="SessionManager.viewSession(${idx})">
-          <div class="hi-top">
-            <span class="hi-date">${dateStr}</span>
-            <span class="hi-badge ${badge}">${avg}%</span>
-          </div>
-          <div class="hi-duration">
-            <span>${durStr}</span>
-            ${s.settings.blink ? ' · Blink ✓' : ''}
-            ${s.settings.head  ? ' · Head ✓'  : ''}
-          </div>
-          <canvas class="mini-chart" id="miniChart${idx}" style="width:100%;margin-top:8px;border-radius:4px;"></canvas>
-        </div>`;
-    }).join('');
+    // Push to both desktop and mobile lists
+    ['historyList', 'm-historyList'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    });
 
-    // Render mini sparklines after DOM update
+    // Render sparklines after paint
     requestAnimationFrame(() => {
       sessions.forEach((s, idx) => {
         const mc = document.getElementById(`miniChart${idx}`);
@@ -311,62 +319,62 @@ const SessionManager = (() => {
   function showReport(session) {
     showScreen('screenReport');
 
-    // Avg score
-    const avgEl = document.getElementById('reportAvgScore');
-    if (avgEl) {
-      avgEl.textContent = session.summary.avgFocus + '%';
-      avgEl.style.color = session.summary.avgFocus >= 70 ? 'var(--green)'
-        : session.summary.avgFocus >= 40 ? 'var(--yellow)' : 'var(--red)';
-    }
-
-    // Meta
-    const metaEl = document.getElementById('reportMeta');
-    if (metaEl) metaEl.innerHTML = `
+    const scoreColor = session.summary.avgFocus >= 70 ? 'var(--green)'
+      : session.summary.avgFocus >= 40 ? 'var(--yellow)' : 'var(--red)';
+    const metaHTML = `
       Duration: <span>${formatDuration(session.duration)}</span><br>
       Date: <span>${formatDate(session.date)}</span><br>
-      Samples: <span>${session.timeline.length}</span>
-    `;
+      Samples: <span>${session.timeline.length}</span>`;
 
-    // Chart (small delay to let DOM paint)
+    const cards = [
+      { val: session.summary.minFocus + '%', label: 'MIN FOCUS' },
+      { val: session.summary.distractionEvents, label: 'DISTRACTIONS' },
+      { val: session.summary.eyeMoveTotal,      label: 'EYE MOVEMENTS' },
+    ];
+    if (session.settings.blink) cards.push({ val: session.summary.totalBlinks, label: 'TOTAL BLINKS' });
+    if (session.settings.head)  cards.push({ val: session.summary.headEvents,  label: 'HEAD EVENTS' });
+    const statsHTML = cards.map(c => `
+      <div class="report-stat-card">
+        <span class="rs-val">${c.val}</span>
+        <span class="rs-label">${c.label}</span>
+      </div>`).join('');
+
+    // Desktop
+    setEl('reportAvgScore', session.summary.avgFocus + '%', scoreColor);
+    const metaEl = document.getElementById('reportMeta');
+    if (metaEl) metaEl.innerHTML = metaHTML;
+    const statsEl = document.getElementById('reportStatsRow');
+    if (statsEl) statsEl.innerHTML = statsHTML;
+
+    // Mobile
+    setEl('m-reportAvgScore', session.summary.avgFocus + '%', scoreColor);
+    const mMetaEl  = document.getElementById('m-reportMeta');
+    if (mMetaEl)  mMetaEl.innerHTML  = metaHTML;
+    const mStatsEl = document.getElementById('m-reportStatsRow');
+    if (mStatsEl) mStatsEl.innerHTML = statsHTML;
+
+    // Render charts after DOM paint
     setTimeout(() => {
-      const chartEl = document.getElementById('focusChart');
-      if (chartEl) renderChart(chartEl, session.timeline, session.duration);
+      const d = document.getElementById('focusChart');
+      const m = document.getElementById('m-focusChart');
+      if (d) renderChart(d, session.timeline, session.duration);
+      if (m) renderChart(m, session.timeline, session.duration);
     }, 80);
 
-    // Stats row
-    const statsEl = document.getElementById('reportStatsRow');
-    if (statsEl) {
-      const cards = [
-        { val: session.summary.minFocus + '%', label: 'MIN FOCUS' },
-        { val: session.summary.distractionEvents, label: 'DISTRACTIONS' },
-        { val: session.summary.eyeMoveTotal, label: 'EYE MOVEMENTS' },
-      ];
-      if (session.settings.blink) {
-        cards.push({ val: session.summary.totalBlinks, label: 'TOTAL BLINKS' });
-      }
-      if (session.settings.head) {
-        cards.push({ val: session.summary.headEvents, label: 'HEAD EVENTS' });
-      }
-      statsEl.innerHTML = cards.map(c => `
-        <div class="report-stat-card">
-          <span class="rs-val">${c.val}</span>
-          <span class="rs-label">${c.label}</span>
-        </div>`).join('');
-    }
-
-    // Update the timer display to final duration
-    const timerEl = document.getElementById('timerDisplay');
-    if (timerEl) timerEl.textContent = formatDuration(session.duration);
+    // Timer displays
+    setEl('timerDisplay',   formatDuration(session.duration));
+    setEl('m-timerDisplay', formatDuration(session.duration));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Session start
   // ─────────────────────────────────────────────────────────────────────────
   function start() {
-    // Read current settings from UI
-    const blinkToggle = document.getElementById('toggleBlink');
-    const headToggle  = document.getElementById('toggleHead');
-    const thresh      = document.getElementById('threshSlider');
+    // Read settings — prefer the active layout's controls
+    const mobile = isMobile();
+    const blinkToggle = document.getElementById(mobile ? 'm-toggleBlink' : 'toggleBlink');
+    const headToggle  = document.getElementById(mobile ? 'm-toggleHead'  : 'toggleHead');
+    const thresh      = document.getElementById(mobile ? 'm-threshSlider': 'threshSlider');
     sessionSettings = {
       blink:     blinkToggle ? blinkToggle.checked : true,
       head:      headToggle  ? headToggle.checked  : true,
@@ -414,35 +422,45 @@ const SessionManager = (() => {
     // Switch to active screen
     showScreen('screenActive');
 
-    // Session timer
-    const timerEl  = document.getElementById('timerDisplay');
-    const camTimer = document.getElementById('camTimer');
-    const sessionTimerEl = document.getElementById('sessionTimer');
-    if (sessionTimerEl) sessionTimerEl.classList.add('visible');
-    if (camTimer) camTimer.classList.add('visible');
+    // Show timers in both layouts
+    ['sessionTimer','m-sessionTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('visible');
+    });
+    ['camTimer','m-camTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('visible');
+    });
+
+    // Show/hide optional cards in both layouts
+    ['liveBlinkCard','m-liveBlinkCard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = sessionSettings.blink ? '' : 'none';
+    });
+    ['liveHeadCard','m-liveHeadCard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = sessionSettings.head ? '' : 'none';
+    });
 
     let elapsedSeconds = 0;
     timerInterval = setInterval(() => {
       elapsedSeconds++;
       activeSession.duration = elapsedSeconds;
       const str = formatDuration(elapsedSeconds);
-      if (timerEl)  timerEl.textContent  = str;
-      if (camTimer) camTimer.textContent = str;
+      setEl('timerDisplay',   str);
+      setEl('m-timerDisplay', str);
+      setEl('camTimer',   str);
+      setEl('m-camTimer', str);
     }, 1000);
 
-    // ── Fast display refresh (every 1s) ──
-    // Updates the live stats panel continuously so the user sees
-    // real-time values, not values frozen for 10 seconds at a time.
-    // Uses the current accumulated eye moves since the last 10s sample,
-    // plus live blink rate and head score from the tracker.
+    // ── Fast display refresh (every 0.5s) ──
     displayInterval = setInterval(() => {
       if (!activeSession) return;
       const blinkRate = Tracker.getBlinkRate();
       const headScore = Tracker.getHeadScore();
-      // Calculate a live score from moves accumulated since last sample
       const liveScore = calcFocusScore(sampleEyeMoves, blinkRate, headScore);
       updateLiveUI(liveScore, Tracker.currentDir, blinkRate, headScore);
-    }, 1000);
+    }, 500);
 
     // Focus sampling — every 10s record a data point to the timeline
     sampleInterval = setInterval(() => {
@@ -488,11 +506,18 @@ const SessionManager = (() => {
     displayInterval = null;
     timerInterval   = null;
 
-    // Hide session timer overlay
-    const sessionTimerEl = document.getElementById('sessionTimer');
-    const camTimer = document.getElementById('camTimer');
-    if (sessionTimerEl) sessionTimerEl.classList.remove('visible');
-    if (camTimer) { camTimer.classList.remove('visible'); camTimer.textContent = ''; }
+    // Hide timers in both layouts
+    ['sessionTimer','m-sessionTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('visible');
+    });
+    ['camTimer','m-camTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.classList.remove('visible'); el.textContent = ''; }
+    });
+    // Hide mobile focus badge
+    const badge = document.getElementById('m-focusBadge');
+    if (badge) badge.classList.remove('visible');
 
     // Capture final partial sample if there's been any data
     if (sampleEyeMoves > 0 || activeSession.timeline.length === 0) {
@@ -606,8 +631,9 @@ const SessionManager = (() => {
   // Init — wire up MediaPipe, load history
   // ─────────────────────────────────────────────────────────────────────────
   function init() {
-    const videoEl  = document.getElementById('video');
-    const canvasEl = document.getElementById('overlay');
+    const mobile   = isMobile();
+    const videoEl  = document.getElementById(mobile ? 'm-video'   : 'video');
+    const canvasEl = document.getElementById(mobile ? 'm-overlay' : 'overlay');
     if (!videoEl || !canvasEl) return;
 
     Tracker.start(videoEl, canvasEl);
