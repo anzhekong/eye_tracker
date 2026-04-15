@@ -1,693 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>EyeTrace — Gaze Tracker</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg:        #080b10;
-    --surface:   #0e1420;
-    --border:    rgba(255,255,255,0.07);
-    --teal:      #00e5c3;
-    --purple:    #9d6ef8;
-    --amber:     #f5a623;
-    --pink:      #f472b6;
-    --orange:    #fb923c;
-    --red:       #ef4444;
-    --green:     #4ade80;
-    --text:      #e2e8f0;
-    --muted:     #475569;
-    --mono:      'Space Mono', monospace;
-    --sans:      'DM Sans', sans-serif;
-  }
-
-  * { margin:0; padding:0; box-sizing:border-box; }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    min-height: 100vh;
-    overflow-x: hidden;
-  }
-
-  /* ── Grid background ── */
-  body::before {
-    content:'';
-    position:fixed; inset:0;
-    background-image:
-      linear-gradient(rgba(0,229,195,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,229,195,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events:none; z-index:0;
-  }
-
-  /* ── Layout ── */
-  .app {
-    position:relative; z-index:1;
-    display:grid;
-    grid-template-columns: 1fr 680px 1fr;
-    grid-template-rows: auto 1fr auto;
-    min-height:100vh;
-    gap:0;
-  }
-
-  /* ── Header ── */
-  .header {
-    grid-column: 1 / -1;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding:20px 32px;
-    border-bottom:1px solid var(--border);
-    backdrop-filter:blur(10px);
-  }
-
-  .logo {
-    display:flex; align-items:center; gap:12px;
-  }
-
-  .logo-icon {
-    width:32px; height:32px;
-    border:2px solid var(--teal);
-    border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    position:relative;
-  }
-
-  .logo-icon::after {
-    content:'';
-    width:10px; height:10px;
-    background:var(--teal);
-    border-radius:50%;
-    animation: blink 2s ease-in-out infinite;
-  }
-
-  @keyframes blink {
-    0%,100%{opacity:1; transform:scale(1);}
-    50%{opacity:0.4; transform:scale(0.8);}
-  }
-
-  .logo-text {
-    font-family:var(--mono);
-    font-size:1.1rem;
-    color:var(--teal);
-    letter-spacing:0.15em;
-  }
-
-  .logo-sub {
-    font-size:0.65rem;
-    color:var(--muted);
-    letter-spacing:0.2em;
-    text-transform:uppercase;
-    margin-top:1px;
-  }
-
-  .header-right {
-    display:flex; align-items:center; gap:20px;
-  }
-
-  .session-timer {
-    font-family:var(--mono);
-    font-size:0.85rem;
-    color:var(--muted);
-    letter-spacing:0.1em;
-  }
-
-  .session-timer span { color:var(--teal); }
-
-  .status-pill {
-    display:flex; align-items:center; gap:7px;
-    padding:6px 14px;
-    border-radius:999px;
-    border:1px solid var(--border);
-    font-size:0.75rem;
-    color:var(--muted);
-    font-family:var(--mono);
-    letter-spacing:0.05em;
-    transition: all 0.3s;
-  }
-
-  .status-pill.active {
-    border-color: rgba(0,229,195,0.3);
-    color:var(--teal);
-  }
-
-  .status-dot {
-    width:6px; height:6px;
-    border-radius:50%;
-    background:var(--muted);
-    transition:background 0.3s;
-  }
-
-  .status-pill.active .status-dot {
-    background:var(--teal);
-    box-shadow:0 0 8px var(--teal);
-    animation:blink 1.5s ease-in-out infinite;
-  }
-
-  /* ── Left panel ── */
-  .panel-left {
-    padding:24px 16px 24px 24px;
-    display:flex;
-    flex-direction:column;
-    gap:16px;
-    border-right:1px solid var(--border);
-  }
-
-  /* ── Center: camera ── */
-  .camera-area {
-    padding:24px 20px;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    gap:16px;
-  }
-
-  .camera-wrap {
-    position:relative;
-    border-radius:12px;
-    overflow:hidden;
-    border:1px solid var(--border);
-    box-shadow: 0 0 0 1px rgba(0,229,195,0.08), 0 20px 60px rgba(0,0,0,0.5);
-  }
-
-  .camera-wrap::before {
-    content:'';
-    position:absolute;
-    inset:0;
-    border-radius:12px;
-    background:linear-gradient(135deg, rgba(0,229,195,0.05) 0%, transparent 60%);
-    pointer-events:none;
-    z-index:2;
-  }
-
-  /* Corner brackets */
-  .camera-wrap::after {
-    content:'';
-    position:absolute;
-    inset:0; z-index:3;
-    background:
-      linear-gradient(var(--teal),var(--teal)) top left/20px 2px no-repeat,
-      linear-gradient(var(--teal),var(--teal)) top left/2px 20px no-repeat,
-      linear-gradient(var(--teal),var(--teal)) top right/20px 2px no-repeat,
-      linear-gradient(var(--teal),var(--teal)) top right/2px 20px no-repeat,
-      linear-gradient(var(--teal),var(--teal)) bottom left/20px 2px no-repeat,
-      linear-gradient(var(--teal),var(--teal)) bottom left/2px 20px no-repeat,
-      linear-gradient(var(--teal),var(--teal)) bottom right/20px 2px no-repeat,
-      linear-gradient(var(--teal),var(--teal)) bottom right/2px 20px no-repeat;
-    opacity:0.6;
-    pointer-events:none;
-  }
-
-  video {
-    display:block;
-    width:640px; height:480px;
-    transform:scaleX(-1);
-  }
-
-  canvas {
-    position:absolute; top:0; left:0;
-    width:640px; height:480px;
-    transform:scaleX(-1);
-    z-index:1;
-  }
-
-  /* Scan line effect */
-  .scanline {
-    position:absolute;
-    left:0; right:0;
-    height:2px;
-    background:linear-gradient(90deg, transparent, var(--teal), transparent);
-    opacity:0.15;
-    z-index:4;
-    animation:scan 4s linear infinite;
-    pointer-events:none;
-  }
-  @keyframes scan { from{top:0} to{top:100%} }
-
-  /* ── Gaze compass ── */
-  .compass-row {
-    display:flex; gap:16px; width:100%; align-items:center;
-  }
-
-  .compass {
-    width:120px; height:120px;
-    position:relative;
-    flex-shrink:0;
-  }
-
-  .compass-ring {
-    position:absolute; inset:0;
-    border:1px solid var(--border);
-    border-radius:50%;
-  }
-
-  .compass-ring:nth-child(2) { inset:12px; border-color:rgba(255,255,255,0.04); }
-
-  .compass-dot {
-    position:absolute;
-    width:14px; height:14px;
-    border-radius:50%;
-    background:var(--teal);
-    box-shadow:0 0 12px var(--teal);
-    top:50%; left:50%;
-    transform:translate(-50%,-50%);
-    transition:top 0.25s cubic-bezier(.34,1.56,.64,1), left 0.25s cubic-bezier(.34,1.56,.64,1);
-  }
-
-  .compass-label {
-    position:absolute;
-    font-family:var(--mono);
-    font-size:0.55rem;
-    color:var(--muted);
-    letter-spacing:0.1em;
-  }
-
-  .compass-label.top    { top:4px;  left:50%; transform:translateX(-50%); }
-  .compass-label.bottom { bottom:4px; left:50%; transform:translateX(-50%); }
-  .compass-label.left   { left:4px;  top:50%; transform:translateY(-50%); }
-  .compass-label.right  { right:4px; top:50%; transform:translateY(-50%); }
-
-  .gaze-stats {
-    flex:1;
-    display:grid;
-    grid-template-columns:1fr 1fr;
-    gap:10px;
-  }
-
-  .stat-cell {
-    background:var(--surface);
-    border:1px solid var(--border);
-    border-radius:10px;
-    padding:12px 14px;
-  }
-
-  .stat-cell label {
-    display:block;
-    font-size:0.62rem;
-    color:var(--muted);
-    letter-spacing:0.12em;
-    text-transform:uppercase;
-    margin-bottom:5px;
-    font-family:var(--mono);
-  }
-
-  .stat-cell .val {
-    font-family:var(--mono);
-    font-size:1rem;
-    font-weight:700;
-    color:var(--teal);
-  }
-
-  /* ── Right panel ── */
-  .panel-right {
-    padding:24px 24px 24px 16px;
-    display:flex;
-    flex-direction:column;
-    gap:16px;
-    border-left:1px solid var(--border);
-    overflow-y:auto;
-    max-height:calc(100vh - 73px);
-  }
-
-  /* ── Shared card style ── */
-  .card {
-    background:var(--surface);
-    border:1px solid var(--border);
-    border-radius:12px;
-    overflow:hidden;
-  }
-
-  .card-header {
-    display:flex; align-items:center; justify-content:space-between;
-    padding:12px 16px;
-    border-bottom:1px solid var(--border);
-  }
-
-  .card-title {
-    font-family:var(--mono);
-    font-size:0.68rem;
-    color:var(--muted);
-    letter-spacing:0.15em;
-    text-transform:uppercase;
-  }
-
-  .card-body { padding:14px 16px; }
-
-  /* ── Focus meter card ── */
-  .focus-level {
-    display:flex; align-items:center; justify-content:space-between;
-    margin-bottom:10px;
-  }
-
-  .focus-label {
-    font-size:0.8rem;
-    font-weight:500;
-    color:var(--green);
-    transition:color 0.4s;
-  }
-
-  .focus-pct {
-    font-family:var(--mono);
-    font-size:0.75rem;
-    color:var(--muted);
-  }
-
-  .meter-track {
-    height:8px;
-    background:rgba(255,255,255,0.05);
-    border-radius:999px;
-    overflow:hidden;
-    margin-bottom:12px;
-  }
-
-  .meter-fill {
-    height:100%;
-    width:0%;
-    border-radius:999px;
-    background:var(--green);
-    transition:width 0.5s ease, background 0.5s ease;
-  }
-
-  .alert-stats {
-    display:grid; grid-template-columns:repeat(3,1fr);
-    gap:8px;
-  }
-
-  .mini-stat {
-    text-align:center;
-    padding:8px 6px;
-    background:rgba(255,255,255,0.03);
-    border-radius:8px;
-    border:1px solid var(--border);
-  }
-
-  .mini-stat .n {
-    font-family:var(--mono);
-    font-size:1.1rem;
-    font-weight:700;
-    display:block;
-    margin-bottom:2px;
-  }
-
-  .mini-stat .l {
-    font-size:0.6rem;
-    color:var(--muted);
-    letter-spacing:0.08em;
-    text-transform:uppercase;
-  }
-
-  /* ── Settings ── */
-  .setting-row {
-    display:flex; align-items:center; justify-content:space-between;
-    padding:8px 0;
-    border-bottom:1px solid var(--border);
-  }
-
-  .setting-row:last-child { border-bottom:none; }
-
-  .setting-label {
-    font-size:0.78rem;
-    color:var(--text);
-  }
-
-  .setting-sub {
-    font-size:0.65rem;
-    color:var(--muted);
-    margin-top:2px;
-  }
-
-  .setting-control {
-    display:flex; align-items:center; gap:8px;
-  }
-
-  .setting-val {
-    font-family:var(--mono);
-    font-size:0.75rem;
-    color:var(--teal);
-    min-width:28px;
-    text-align:right;
-  }
-
-  input[type=range] {
-    -webkit-appearance:none;
-    width:80px; height:4px;
-    background:rgba(255,255,255,0.1);
-    border-radius:999px;
-    outline:none;
-  }
-
-  input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance:none;
-    width:12px; height:12px;
-    border-radius:50%;
-    background:var(--teal);
-    cursor:pointer;
-    box-shadow:0 0 6px var(--teal);
-  }
-
-  /* ── Movement history ── */
-  .history-list {
-    display:flex;
-    flex-direction:column;
-    gap:6px;
-    max-height:280px;
-    overflow-y:auto;
-    padding:2px;
-  }
-
-  .history-list::-webkit-scrollbar { width:3px; }
-  .history-list::-webkit-scrollbar-track { background:transparent; }
-  .history-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; }
-
-  .h-item {
-    display:flex; align-items:center; gap:8px;
-    padding:8px 12px;
-    border-radius:8px;
-    background:rgba(255,255,255,0.02);
-    border:1px solid rgba(255,255,255,0.04);
-    animation:slideDown 0.2s ease;
-    transition:opacity 0.3s;
-  }
-
-  .h-item.faded { opacity:0.35; }
-
-  @keyframes slideDown {
-    from{opacity:0; transform:translateY(-4px);}
-    to{opacity:1; transform:translateY(0);}
-  }
-
-  .h-num {
-    font-family:var(--mono);
-    font-size:0.6rem;
-    color:var(--muted);
-    min-width:18px;
-    text-align:right;
-  }
-
-  .h-arrow {
-    font-family:var(--mono);
-    font-size:1rem;
-    min-width:16px;
-    text-align:center;
-  }
-
-  .h-dir {
-    font-size:0.78rem;
-    font-weight:500;
-    flex:1;
-  }
-
-  .h-time {
-    font-family:var(--mono);
-    font-size:0.6rem;
-    color:var(--muted);
-  }
-
-  .dir-left   { color:var(--purple); }
-  .dir-right  { color:var(--teal); }
-  .dir-center { color:var(--amber); }
-  .dir-up     { color:var(--pink); }
-  .dir-down   { color:var(--orange); }
-
-  /* ── Heatmap ── */
-  #heatmap {
-    width:100%;
-    height:120px;
-    border-radius:8px;
-    overflow:hidden;
-    position:relative;
-    background:#060910;
-    border:1px solid var(--border);
-  }
-
-  #heatmapCanvas { width:100%; height:100%; }
-
-  .heatmap-labels {
-    display:grid;
-    grid-template-columns:repeat(3,1fr);
-    text-align:center;
-    margin-top:6px;
-  }
-
-  .heatmap-labels span {
-    font-family:var(--mono);
-    font-size:0.6rem;
-    color:var(--muted);
-  }
-
-  /* ── Clear button ── */
-  .clear-btn {
-    width:100%;
-    padding:9px;
-    background:transparent;
-    border:1px solid var(--border);
-    border-radius:8px;
-    color:var(--muted);
-    font-size:0.75rem;
-    font-family:var(--mono);
-    letter-spacing:0.08em;
-    cursor:pointer;
-    transition:all 0.2s;
-  }
-
-  .clear-btn:hover {
-    background:rgba(255,255,255,0.05);
-    color:var(--text);
-    border-color:rgba(255,255,255,0.15);
-  }
-
-  /* ── Alert banner ── */
-  #alertBanner {
-    position:fixed;
-    top:88px; left:50%; transform:translateX(-50%);
-    z-index:999;
-    display:none;
-    pointer-events:none;
-  }
-
-  .alert-inner {
-    background:rgba(239,68,68,0.15);
-    border:1px solid rgba(239,68,68,0.4);
-    backdrop-filter:blur(12px);
-    color:#fca5a5;
-    padding:12px 28px;
-    border-radius:12px;
-    font-family:var(--mono);
-    font-size:0.85rem;
-    letter-spacing:0.1em;
-    display:flex; align-items:center; gap:10px;
-    animation:alertPulse 1s ease-in-out infinite;
-  }
-
-  @keyframes alertPulse {
-    0%,100%{box-shadow:0 0 20px rgba(239,68,68,0.2);}
-    50%{box-shadow:0 0 40px rgba(239,68,68,0.4);}
-  }
-
-  .alert-dot {
-    width:8px; height:8px;
-    border-radius:50%;
-    background:#ef4444;
-    animation:blink 0.6s ease-in-out infinite;
-  }
-
-  /* ── Left panel widgets ── */
-  .direction-display {
-    text-align:center;
-    padding:20px;
-  }
-
-  .direction-big {
-    font-family:var(--mono);
-    font-size:3rem;
-    color:var(--teal);
-    transition:all 0.2s;
-    line-height:1;
-    margin-bottom:8px;
-    filter:drop-shadow(0 0 20px currentColor);
-  }
-
-  .direction-word {
-    font-size:0.75rem;
-    color:var(--muted);
-    letter-spacing:0.2em;
-    text-transform:uppercase;
-    font-family:var(--mono);
-  }
-
-  /* ── Footer ── */
-  .footer {
-    grid-column: 1 / -1;
-    padding:12px 32px;
-    border-top:1px solid var(--border);
-    display:flex; align-items:center; justify-content:space-between;
-  }
-
-  .footer-note {
-    font-size:0.65rem;
-    color:var(--muted);
-    font-family:var(--mono);
-    letter-spacing:0.08em;
-  }
-
-  .footer-right {
-    display:flex; gap:20px;
-  }
-
-  .footer-stat {
-    font-size:0.65rem;
-    color:var(--muted);
-    font-family:var(--mono);
-  }
-
-  .footer-stat span { color:var(--teal); }
-
-  /* ── Scrollbar global ── */
-  .panel-right::-webkit-scrollbar { width:3px; }
-  .panel-right::-webkit-scrollbar-track { background:transparent; }
-  .panel-right::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>EyeTrace — Focus Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<!-- Distraction alert banner -->
-<div id="alertBanner">
-  <div class="alert-inner">
-    <div class="alert-dot"></div>
-    DISTRACTION DETECTED
-  </div>
-</div>
-
-<!-- Fatigue / blink rate alert banner -->
-<div id="fatigueBanner" style="position:fixed;top:88px;left:50%;transform:translateX(-50%);
-  z-index:998;display:none;pointer-events:none;">
-  <div style="background:rgba(251,146,60,0.15);border:1px solid rgba(251,146,60,0.4);
-    backdrop-filter:blur(12px);color:#fed7aa;padding:12px 28px;border-radius:12px;
-    font-family:'Space Mono',monospace;font-size:0.85rem;letter-spacing:0.1em;
-    display:flex;align-items:center;gap:10px;
-    animation:alertPulse 1s ease-in-out infinite;">
-    <div style="width:8px;height:8px;border-radius:50%;background:#fb923c;
-      animation:blink 0.8s ease-in-out infinite;"></div>
-    <span id="fatigueBannerText">FATIGUE DETECTED</span>
-  </div>
-</div>
-
-<!-- Head movement alert banner -->
-<div id="headBanner" style="position:fixed;top:132px;left:50%;transform:translateX(-50%);
-  z-index:997;display:none;pointer-events:none;">
-  <div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);
-    backdrop-filter:blur(12px);color:#fca5a5;padding:12px 28px;border-radius:12px;
-    font-family:'Space Mono',monospace;font-size:0.85rem;letter-spacing:0.1em;
-    display:flex;align-items:center;gap:10px;
-    animation:alertPulse 1s ease-in-out infinite;">
-    <div style="width:8px;height:8px;border-radius:50%;background:#ef4444;
-      animation:blink 0.6s ease-in-out infinite;"></div>
-    HEAD MOVEMENT — FOCUS ON SCREEN
-  </div>
-</div>
 
 <div class="app">
 
@@ -697,1206 +17,197 @@
       <div class="logo-icon"></div>
       <div>
         <div class="logo-text">EYETRACE</div>
-        <div class="logo-sub">Gaze Intelligence System</div>
+        <div class="logo-sub">Focus Intelligence</div>
       </div>
     </div>
     <div class="header-right">
-      <div class="session-timer">SESSION <span id="timer">00:00</span></div>
+      <div class="session-timer" id="sessionTimer">
+        SESSION <span id="timerDisplay">00:00</span>
+      </div>
       <div class="status-pill" id="statusPill">
         <div class="status-dot"></div>
-        <span id="statusText">INITIALIZING</span>
+        <span id="statusText">READY</span>
       </div>
     </div>
   </header>
 
-  <!-- ── LEFT PANEL ── -->
-  <aside class="panel-left">
+  <!-- ── LAYOUT ── -->
+  <div class="layout">
 
-    <!-- Direction display -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Gaze Direction</span>
-      </div>
-      <div class="direction-display">
-        <div class="direction-big" id="dirBig">·</div>
-        <div class="direction-word" id="dirWord">waiting</div>
-      </div>
-    </div>
+    <!-- ── MAIN COLUMN ── -->
+    <div class="main-col">
 
-    <!-- Focus meter -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Focus Level</span>
-        <span class="focus-label" id="focusLabel">Focused</span>
+      <!-- Camera (always shown once MediaPipe loads) -->
+      <div class="camera-wrap" id="cameraWrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="scanline"></div>
+        <!-- Floating session timer overlay during active session -->
+        <div class="cam-timer" id="camTimer"></div>
       </div>
-      <div class="card-body">
-        <div class="focus-level">
-          <span style="font-size:0.7rem;color:var(--muted);">Activity in 10s</span>
-          <span class="focus-pct"><span id="movePer10s" style="color:var(--teal);font-family:var(--mono);">0</span> / <span id="threshVal">6</span></span>
+
+      <!-- Debug strip (below camera, always) -->
+      <div class="debug-strip">
+        <div class="dbg-item">
+          <span class="dbg-label">VERT</span>
+          <span id="dbgRatio" class="dbg-val" style="color:var(--teal)">—</span>
         </div>
-        <div class="meter-track">
-          <div class="meter-fill" id="meterFill"></div>
+        <div class="dbg-item">
+          <span class="dbg-label">EAR</span>
+          <span id="dbgEar" class="dbg-val" style="color:var(--amber)">—</span>
         </div>
-        <div class="alert-stats">
-          <div class="mini-stat">
-            <span class="n" style="color:var(--teal);" id="statMoves">0</span>
-            <span class="l">moves/10s</span>
+        <div class="dbg-item">
+          <span class="dbg-label">BLINK</span>
+          <span id="dbgBlock" class="dbg-val" style="color:var(--red)">—</span>
+        </div>
+        <div class="dbg-item">
+          <span class="dbg-label">GAZE</span>
+          <span id="dbgGaze" class="dbg-val" style="color:var(--purple)">—</span>
+        </div>
+      </div>
+
+      <!-- ── SCREEN: IDLE ── -->
+      <div id="screenIdle" class="screen active">
+        <div class="idle-wrap">
+          <p class="idle-hint">Configure your session and press Start when ready.</p>
+
+          <div class="settings-card">
+            <div class="settings-title">TRACKING OPTIONS</div>
+
+            <label class="toggle-row">
+              <div class="toggle-info">
+                <span class="toggle-label">Blink detection</span>
+                <span class="toggle-sub">Measures fatigue from blink rate (Andreassi 2000)</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleBlink" checked>
+                <span class="slider"></span>
+              </label>
+            </label>
+
+            <label class="toggle-row">
+              <div class="toggle-info">
+                <span class="toggle-label">Head movement</span>
+                <span class="toggle-sub">Flags distraction from excessive head shifts</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleHead" checked>
+                <span class="slider"></span>
+              </label>
+            </label>
+
+            <div class="threshold-row">
+              <div class="toggle-info">
+                <span class="toggle-label">Eye movement threshold</span>
+                <span class="toggle-sub">Max gaze shifts / 10s before distraction logged</span>
+              </div>
+              <div class="threshold-control">
+                <input type="range" id="threshSlider" min="3" max="12" value="6"
+                  oninput="document.getElementById('threshDisp').textContent = this.value">
+                <span class="thresh-val" id="threshDisp">6</span>
+              </div>
+            </div>
           </div>
-          <div class="mini-stat">
-            <span class="n" style="color:var(--purple);" id="statPeak">0</span>
-            <span class="l">peak</span>
+
+          <button class="btn-start" onclick="SessionManager.start()">
+            ▶ &nbsp;START SESSION
+          </button>
+        </div>
+      </div>
+
+      <!-- ── SCREEN: ACTIVE ── -->
+      <div id="screenActive" class="screen">
+        <div class="active-wrap">
+          <div class="live-stats-row">
+            <div class="live-card">
+              <div class="live-label">FOCUS</div>
+              <div class="live-big" id="liveFocusScore">—</div>
+            </div>
+            <div class="live-card">
+              <div class="live-label">GAZE</div>
+              <div class="live-big" id="liveGazDir">—</div>
+            </div>
+            <div class="live-card" id="liveBlinkCard">
+              <div class="live-label">BLINKS/MIN</div>
+              <div class="live-big" id="liveBlinkRate">—</div>
+            </div>
+            <div class="live-card" id="liveHeadCard">
+              <div class="live-label">HEAD</div>
+              <div class="live-big" id="liveHeadScore">—</div>
+            </div>
           </div>
-          <div class="mini-stat">
-            <span class="n" style="color:var(--red);" id="statAlerts">0</span>
-            <span class="l">alerts</span>
+
+          <div class="focus-bar-wrap">
+            <div class="focus-bar-track">
+              <div class="focus-bar-fill" id="focusBarFill"></div>
+            </div>
+            <div class="focus-bar-labels">
+              <span>Distracted</span><span>Focused</span>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Blink rate / fatigue card -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Blink Rate</span>
-        <span id="blinkStatus" style="font-size:0.75rem;font-weight:500;color:#4ade80;transition:color 0.4s;">collecting...</span>
-      </div>
-      <div class="card-body">
-        <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:10px;">
-          <span id="blinkRate" style="font-family:'Space Mono',monospace;font-size:2rem;font-weight:700;color:var(--teal);line-height:1;">—</span>
-          <span style="font-size:0.7rem;color:var(--muted);">blinks / min</span>
+          <button class="btn-end" onclick="SessionManager.end()">
+            ■ &nbsp;END SESSION
+          </button>
         </div>
-        <!-- Fatigue meter -->
-        <div style="margin-bottom:8px;">
-          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-            <span style="font-size:0.6rem;color:var(--muted);font-family:'Space Mono',monospace;">EYE STRAIN</span>
-            <span style="font-size:0.6rem;color:var(--muted);font-family:'Space Mono',monospace;">FATIGUE</span>
+      </div>
+
+      <!-- ── SCREEN: REPORT ── -->
+      <div id="screenReport" class="screen">
+        <div class="report-wrap">
+
+          <div class="report-top">
+            <div class="report-score-block">
+              <div class="report-score-label">AVG FOCUS</div>
+              <div class="report-score-value" id="reportAvgScore">—</div>
+            </div>
+            <div class="report-meta" id="reportMeta"></div>
           </div>
-          <div class="meter-track">
-            <div id="blinkFill" class="meter-fill" style="background:#4ade80;"></div>
+
+          <div class="chart-wrap">
+            <canvas id="focusChart"></canvas>
+            <div class="chart-y-labels">
+              <span>100</span><span>75</span><span>50</span><span>25</span><span>0</span>
+            </div>
           </div>
-          <div style="display:flex;justify-content:space-between;margin-top:3px;">
-            <span style="font-size:0.58rem;color:#333;font-family:'Space Mono',monospace;">&lt;6</span>
-            <span style="font-size:0.58rem;color:#333;font-family:'Space Mono',monospace;">6–20 normal</span>
-            <span style="font-size:0.58rem;color:#333;font-family:'Space Mono',monospace;">&gt;25</span>
+          <div class="chart-legend">
+            <span class="legend-dot green"></span>Focused (70–100)
+            <span class="legend-dot yellow"></span>Mild (40–70)
+            <span class="legend-dot red"></span>Distracted (0–40)
           </div>
-        </div>
-        <!-- Reference note -->
-        <div style="padding:8px;background:rgba(255,255,255,0.02);border-radius:8px;
-          border:1px solid var(--border);margin-bottom:8px;">
-          <div style="font-size:0.62rem;color:var(--muted);line-height:1.6;">
-            Based on: Andreassi (2000) · Caffier et al. (2003)<br>
-            Normal: 10–20/min · Fatigue: &gt;25/min
+
+          <div class="report-stats-row" id="reportStatsRow"></div>
+
+          <div class="report-actions">
+            <button class="btn-start" onclick="SessionManager.newSession()">
+              ▶ &nbsp;NEW SESSION
+            </button>
           </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div class="mini-stat">
-            <span class="n" style="color:var(--teal);" id="blinkTotal">0</span>
-            <span class="l">total blinks</span>
-          </div>
-          <div class="mini-stat">
-            <span class="n" style="color:var(--purple);" id="blinkWindow">60</span>
-            <span class="l">sec window</span>
-          </div>
+
         </div>
       </div>
-    </div>
 
-    <!-- Head movement card -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Head Movement</span>
-        <span id="headStatus" style="font-size:0.75rem;font-weight:500;color:#4ade80;transition:color 0.4s;">Still</span>
+    </div><!-- /main-col -->
+
+    <!-- ── HISTORY SIDEBAR ── -->
+    <aside class="history-sidebar">
+      <div class="history-top">
+        <span class="history-title">HISTORY</span>
+        <button class="btn-clear" onclick="SessionManager.clearHistory()">CLEAR ALL</button>
       </div>
-      <div class="card-body">
-        <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:10px;">
-          <span id="headScore" style="font-family:'Space Mono',monospace;font-size:2rem;font-weight:700;color:var(--teal);line-height:1;">0.00</span>
-          <span style="font-size:0.7rem;color:var(--muted);">activity / 5s</span>
-        </div>
-        <div class="meter-track" style="margin-bottom:8px;">
-          <div id="headFill" class="meter-fill" style="background:#4ade80;width:0%;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-          <span style="font-size:0.6rem;color:#333;font-family:'Space Mono',monospace;">still</span>
-          <span style="font-size:0.6rem;color:#333;font-family:'Space Mono',monospace;">mild</span>
-          <span style="font-size:0.6rem;color:#333;font-family:'Space Mono',monospace;">high</span>
-        </div>
-        <div style="padding:8px;background:rgba(255,255,255,0.02);border-radius:8px;
-          border:1px solid var(--border);">
-          <div style="font-size:0.62rem;color:var(--muted);line-height:1.6;">
-            Tracks nose-tip displacement per frame,<br>
-            normalized by inter-eye distance.<br>
-            Alert fires at score &gt; 3.0 in 5s.
-          </div>
-        </div>
+      <div class="history-scroll" id="historyList">
+        <div class="history-empty">No sessions recorded yet.<br>Start your first session!</div>
       </div>
-    </div>
+    </aside>
 
-    <!-- Settings -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Settings</span>
-      </div>
-      <div class="card-body">
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">Alert threshold</div>
-            <div class="setting-sub">moves per 10 seconds</div>
-          </div>
-          <div class="setting-control">
-            <input type="range" id="threshSlider" min="3" max="15" value="6"
-              oninput="DISTRACT_THRESH=+this.value; document.getElementById('threshDisp').textContent=this.value; document.getElementById('threshVal').textContent=this.value;">
-            <span class="setting-val" id="threshDisp">6</span>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">Sensitivity</div>
-            <div class="setting-sub">gaze change detection</div>
-          </div>
-          <div class="setting-control">
-            <input type="range" id="sensSlider" min="200" max="1000" value="500" step="100"
-              oninput="THROTTLE_MS=+this.value; document.getElementById('sensDisp').textContent=(this.value/1000).toFixed(1)+'s';">
-            <span class="setting-val" id="sensDisp">0.5s</span>
-          </div>
-        </div>
-      </div>
-    </div>
+  </div><!-- /layout -->
 
-  </aside>
-
-  <!-- ── CENTER: CAMERA ── -->
-  <main class="camera-area">
-
-    <div class="camera-wrap">
-      <video id="video" autoplay playsinline muted></video>
-      <canvas id="overlay"></canvas>
-      <div class="scanline"></div>
-    </div>
-
-    <!-- Compass + stats row -->
-    <div class="compass-row">
-      <div class="compass">
-        <div class="compass-ring"></div>
-        <div class="compass-ring"></div>
-        <span class="compass-label top">UP</span>
-        <span class="compass-label bottom">DN</span>
-        <span class="compass-label left">L</span>
-        <span class="compass-label right">R</span>
-        <div class="compass-dot" id="compassDot"></div>
-      </div>
-
-      <div class="gaze-stats">
-        <div class="stat-cell">
-          <label>Left iris</label>
-          <div class="val" id="leftPos">—</div>
-        </div>
-        <div class="stat-cell">
-          <label>Right iris</label>
-          <div class="val" id="rightPos">—</div>
-        </div>
-        <div class="stat-cell">
-          <label>Total movements</label>
-          <div class="val" id="totalMoves">0</div>
-        </div>
-        <div class="stat-cell">
-          <label>Current gaze</label>
-          <div class="val" id="gazeDir">—</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Live debug panel -->
-    <div style="width:100%;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.07);
-      border-radius:10px;padding:10px 16px;font-family:'Space Mono',monospace;
-      display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-      <div>
-        <div style="color:#475569;font-size:0.58rem;margin-bottom:4px;letter-spacing:0.1em;">VERT RATIO</div>
-        <div id="dbgRatio" style="color:#00e5c3;font-size:0.78rem;">—</div>
-        <div style="color:#333;font-size:0.55rem;margin-top:3px;">↓&gt;0.08 / ↑&lt;-0.08</div>
-      </div>
-      <div>
-        <div style="color:#475569;font-size:0.58rem;margin-bottom:4px;letter-spacing:0.1em;">EAR</div>
-        <div id="dbgEar" style="color:#f5a623;font-size:0.78rem;">—</div>
-        <div style="color:#333;font-size:0.55rem;margin-top:3px;">blink if fast drop</div>
-      </div>
-      <div>
-        <div style="color:#475569;font-size:0.58rem;margin-bottom:4px;letter-spacing:0.1em;">BLINK STATE</div>
-        <div id="dbgBlock" style="color:#ef4444;font-size:0.78rem;">—</div>
-      </div>
-    </div>
-
-  </main>
-
-  <!-- ── RIGHT PANEL ── -->
-  <aside class="panel-right">
-
-    <!-- Heatmap -->
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Gaze Heatmap</span>
-        <button class="clear-btn" style="width:auto;padding:4px 10px;font-size:0.6rem;" onclick="clearHeatmap()">RESET</button>
-      </div>
-      <div class="card-body" style="padding-bottom:10px;">
-        <div id="heatmap">
-          <canvas id="heatmapCanvas"></canvas>
-        </div>
-        <div class="heatmap-labels">
-          <span>LEFT</span>
-          <span>CENTER</span>
-          <span>RIGHT</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:4px;">
-          <span style="font-size:0.58rem;color:#333;font-family:'Space Mono',monospace;">UP ↑ — DOWN ↓  ·  continuous iris tracking</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Movement history -->
-    <div class="card" style="flex:1;">
-      <div class="card-header">
-        <span class="card-title">Movement Log</span>
-        <button class="clear-btn" style="width:auto;padding:4px 10px;font-size:0.6rem;" onclick="clearHistory()">CLEAR</button>
-      </div>
-      <div class="card-body">
-        <div class="history-list" id="historyList">
-          <div style="text-align:center;padding:30px 0;font-size:0.72rem;color:var(--muted);font-family:var(--mono);">
-            — awaiting movement —
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </aside>
-
-  <!-- ── FOOTER ── -->
-  <footer class="footer">
-    <div class="footer-note">EYETRACE v1.0 · ALL PROCESSING LOCAL · NO DATA SENT</div>
-    <div class="footer-right">
-      <div class="footer-stat">LEFT <span id="fLeft">0</span></div>
-      <div class="footer-stat">RIGHT <span id="fRight">0</span></div>
-      <div class="footer-stat">UP <span id="fUp">0</span></div>
-      <div class="footer-stat">DOWN <span id="fDown">0</span></div>
-      <div class="footer-stat">CENTER <span id="fCenter">0</span></div>
-    </div>
-  </footer>
-
-</div>
+</div><!-- /app -->
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="tracker.js"></script>
+<script src="session.js"></script>
 
-<script>
-// ──────────────────────────────────────────
-//  CONFIG
-// ──────────────────────────────────────────
-let DISTRACT_THRESH = 6;
-let THROTTLE_MS     = 500;
-const WINDOW_MS     = 10000;
-const ALERT_MS      = 3000;
-
-// ──────────────────────────────────────────
-//  TEMPORAL BLINK DETECTOR + FATIGUE SYSTEM
-//
-//  Literature basis:
-//  - Andreassi (2000): normal blink rate = 15–20/min at rest
-//  - Hargutt & Krüger (2000): increase in blink rate = reduced vigilance
-//  - Caffier et al. (2003): fatigue linked to increased blink rate & duration
-//  - MVA 2009 / Martins & Carvalho review: blink rate is robust fatigue indicator
-//
-//  Fatigue thresholds (blinks per minute, 60s rolling window):
-//   < 6  /min → eye strain zone (screen stare, not blinking enough)
-//   6–20 /min → normal
-//  21–25 /min → mild fatigue
-//  26–35 /min → high fatigue
-//   > 35 /min → rest recommended
-// ──────────────────────────────────────────
-const EAR_CLOSE_THRESHOLD   = 0.13;
-const EAR_PARTIAL_THRESHOLD = 0.20;
-const BLINK_FAST_DROP       = 0.04;
-const BLINK_MAX_DURATION    = 450;
-const BLINK_SUPPRESS_MS     = 120;
-// Iris vertical ratio above this = eye is already looking down = not a blink.
-// Lower than the gaze detection threshold (0.08) so we catch early downward movement
-// before it fully registers as a "Down" direction event.
-const IRIS_DOWN_THRESHOLD   = 0.04;
-
-let earBuffer     = [];
-let irisYBuffer   = [];   // rolling iris vertical ratio — the second signal
-let blinkState    = 'OPEN';
-let blinkStart    = 0;
-let suppressUntil = 0;
-
-// Blink rate tracking
-let blinkTimestamps = [];   // timestamps of confirmed blinks (60s rolling)
-let totalBlinks     = 0;
-let fatigueAlertActive = false;
-let fatigueAlertTimeout = null;
-const BLINK_WINDOW_MS  = 60000; // 1 minute rolling window
-
-function computeEAR(lms) {
-  function ear(top, bot, left, right) {
-    return Math.hypot(top.x - bot.x,    top.y - bot.y) /
-           Math.hypot(left.x - right.x, left.y - right.y);
-  }
-  const L = ear(lm(lms,159), lm(lms,145), lm(lms,33),  lm(lms,133));
-  const R = ear(lm(lms,386), lm(lms,374), lm(lms,362), lm(lms,263));
-  return (L + R) / 2;
-}
-
-// Returns true if gaze should be suppressed (blink in progress)
-// ── Dual-signal blink vs downward-gaze classifier ──
-//
-// Single-signal EAR alone can't separate these two because both cause the eyelid
-// to drop. The fix (from the literature) is to check the SECOND signal — iris Y
-// position — at the same time:
-//
-//   Blink:          iris stays near center → EAR drops fast → lid closes over it
-//   Downward gaze:  iris moves DOWN first  → lid follows slowly
-//
-// When EAR starts dropping we check whether the iris has already shifted down.
-// If yes → downward gaze, don't suppress.
-// If no  → blink, suppress gaze updates.
-//
-// irisVertRatio is the value computed by getVertGazeRatio() (positive = iris below midline).
-function classifyBlink(avgEAR, irisVertRatio) {
-  const now = Date.now();
-
-  // Update rolling buffers (8 frames ≈ 270ms @ 30fps)
-  earBuffer.push({ ear: avgEAR, time: now });
-  if (earBuffer.length > 8) earBuffer.shift();
-
-  irisYBuffer.push(irisVertRatio);
-  if (irisYBuffer.length > 6) irisYBuffer.shift();
-
-  if (now < suppressUntil) return true;
-
-  // Rate of EAR change over last 3 frames
-  const prevEAR  = earBuffer.length >= 4 ? earBuffer[earBuffer.length - 4].ear : avgEAR;
-  const dropRate = prevEAR - avgEAR; // positive = EAR falling
-
-  // Average iris Y over recent frames — robust to single-frame noise
-  const avgIrisY = irisYBuffer.reduce((a, b) => a + b, 0) / irisYBuffer.length;
-
-  if (blinkState === 'OPEN') {
-    if (avgEAR < EAR_PARTIAL_THRESHOLD && dropRate > BLINK_FAST_DROP) {
-
-      // ── KEY CHECK: is the iris already shifted downward? ──
-      // If yes, the lid is drooping because the eye is rotating down (gaze shift),
-      // not because it's closing for a blink. Let the frame through as normal.
-      if (avgIrisY > IRIS_DOWN_THRESHOLD) {
-        return false; // downward gaze — not a blink
-      }
-
-      // Iris is centered + EAR dropped fast = confirmed blink start
-      blinkState = 'CLOSING';
-      blinkStart = now;
-      return true;
-    }
-    return false;
-  }
-
-  if (blinkState === 'CLOSING') {
-    // Took too long → reclassify as sustained downward gaze
-    if (now - blinkStart > BLINK_MAX_DURATION) {
-      blinkState = 'OPEN';
-      return false;
-    }
-    // Also bail out if iris has moved down significantly mid-event
-    // (e.g. user started looking down right as they blinked)
-    if (avgIrisY > IRIS_DOWN_THRESHOLD * 2) {
-      blinkState = 'OPEN';
-      return false;
-    }
-    // Eye reopening — blink fully confirmed
-    if (avgEAR > EAR_PARTIAL_THRESHOLD && dropRate < 0) {
-      blinkState    = 'REOPENING';
-      suppressUntil = now + BLINK_SUPPRESS_MS;
-      recordBlink();
-      return true;
-    }
-    return true;
-  }
-
-  if (blinkState === 'REOPENING') {
-    if (avgEAR > EAR_PARTIAL_THRESHOLD) blinkState = 'OPEN';
-    return now < suppressUntil;
-  }
-  return false;
-}
-
-// Used when the ratio is already computed (avoids recalculating landmarks)
-function getVertGazeFromRatio(avg) {
-  const dbgRatio = document.getElementById('dbgRatio');
-  if (dbgRatio) {
-    dbgRatio.textContent = avg.toFixed(3);
-    dbgRatio.style.color = avg > 0.08 ? '#fb923c' : avg < -0.08 ? '#f472b6' : '#00e5c3';
-  }
-  if (avg < -0.08) return '↑ Up';
-  if (avg >  0.08) return '↓ Down';
-  return null;
-}
-function recordBlink() {
-  const now = Date.now();
-  totalBlinks++;
-  blinkTimestamps.push(now);
-  blinkTimestamps = blinkTimestamps.filter(t => now - t <= BLINK_WINDOW_MS);
-  updateBlinkUI();
-}
-
-function getBlinkRate() {
-  // Extrapolate to blinks/min if window < 60s
-  const now     = Date.now();
-  const elapsed = Math.min((now - sessionStart) / 1000, 60);
-  blinkTimestamps = blinkTimestamps.filter(t => now - t <= BLINK_WINDOW_MS);
-  if (elapsed < 10) return null; // not enough data yet
-  return Math.round((blinkTimestamps.length / elapsed) * 60);
-}
-
-function updateBlinkUI() {
-  const rate = getBlinkRate();
-  if (rate === null) {
-    document.getElementById('blinkRate').textContent    = '—';
-    document.getElementById('blinkStatus').textContent  = 'collecting...';
-    document.getElementById('blinkStatus').style.color  = 'var(--muted)';
-    document.getElementById('blinkFill').style.width    = '0%';
-    return;
-  }
-
-  document.getElementById('blinkRate').textContent = rate;
-  document.getElementById('blinkTotal').textContent = totalBlinks;
-
-  let statusText, statusColor, fillPct, fillColor, shouldAlert = false, alertMsg = '';
-
-  if (rate < 6) {
-    // Eye strain — not blinking enough
-    statusText  = 'Eye strain risk';
-    statusColor = '#fb923c';
-    fillPct     = 30;
-    fillColor   = '#fb923c';
-    if (!fatigueAlertActive) { shouldAlert = true; alertMsg = '👁 BLINK MORE — Eye strain detected'; }
-  } else if (rate <= 20) {
-    statusText  = 'Normal';
-    statusColor = '#4ade80';
-    fillPct     = Math.round(((rate - 6) / 14) * 50); // 0–50% of bar
-    fillColor   = '#4ade80';
-  } else if (rate <= 25) {
-    statusText  = 'Mild fatigue';
-    statusColor = '#fbbf24';
-    fillPct     = 60;
-    fillColor   = '#fbbf24';
-  } else if (rate <= 35) {
-    statusText  = 'High fatigue';
-    statusColor = '#fb923c';
-    fillPct     = 80;
-    fillColor   = '#fb923c';
-    if (!fatigueAlertActive) { shouldAlert = true; alertMsg = '😴 HIGH FATIGUE — Consider a short break'; }
-  } else {
-    statusText  = 'Rest needed';
-    statusColor = '#ef4444';
-    fillPct     = 100;
-    fillColor   = '#ef4444';
-    if (!fatigueAlertActive) { shouldAlert = true; alertMsg = '🛑 REST NOW — Blink rate critically high'; }
-  }
-
-  document.getElementById('blinkStatus').textContent = statusText;
-  document.getElementById('blinkStatus').style.color = statusColor;
-  document.getElementById('blinkFill').style.width      = fillPct + '%';
-  document.getElementById('blinkFill').style.background = fillColor;
-
-  if (shouldAlert) triggerFatigueAlert(alertMsg);
-}
-
-function triggerFatigueAlert(msg) {
-  fatigueAlertActive = true;
-  const banner = document.getElementById('fatigueBanner');
-  const text   = document.getElementById('fatigueBannerText');
-  text.textContent = msg;
-  banner.style.display = 'block';
-  clearTimeout(fatigueAlertTimeout);
-  fatigueAlertTimeout = setTimeout(() => {
-    banner.style.display = 'none';
-    fatigueAlertActive   = false;
-  }, 5000);
-}
-
-// Update blink rate display every 5s even with no new blinks
-setInterval(updateBlinkUI, 5000);
-
-// ──────────────────────────────────────────
-//  HEAD MOVEMENT DETECTION
-//
-//  Strategy: track nose tip (landmark 4) — the most stable single point
-//  on the face for translation. Also track the inter-eye distance as a
-//  normalizer so the score is scale-invariant (works at any camera distance).
-//
-//  Each frame we compute displacement from the previous nose position,
-//  normalized by face size. We accumulate these into a 5s rolling buffer.
-//  Total accumulated displacement = "head activity score".
-//
-//  Thresholds (normalized units, empirically calibrated):
-//   < 0.5  = still / micro-adjustments
-//   0.5–1.5 = mild movement (normal)
-//   1.5–3.0 = moderate — worth noting
-//   > 3.0  = high activity → distracted alert
-// ──────────────────────────────────────────
-const HEAD_WINDOW_MS      = 5000;  // 5 second rolling window
-const HEAD_MILD_THRESH    = 0.5;
-const HEAD_MOD_THRESH     = 1.5;
-const HEAD_HIGH_THRESH    = 3.0;
-const HEAD_ALERT_MS       = 4000;
-
-let headDisplacements  = [];   // { delta, time } rolling buffer
-let lastNosePos        = null; // { x, y } normalized
-let headAlertActive    = false;
-let headAlertTimeout   = null;
-let totalHeadActivity  = 0;
-
-function trackHeadMovement(lms) {
-  // Nose tip as primary tracking point
-  const nose = lms[4];
-
-  // Inter-eye distance as face-size normalizer
-  // (so score is consistent regardless of how close user is to camera)
-  const lEye = lms[33];
-  const rEye = lms[263];
-  const faceScale = Math.hypot(lEye.x - rEye.x, lEye.y - rEye.y);
-  if (faceScale < 0.01) return; // bad frame
-
-  if (lastNosePos) {
-    const dx    = (nose.x - lastNosePos.x) / faceScale;
-    const dy    = (nose.y - lastNosePos.y) / faceScale;
-    const delta = Math.hypot(dx, dy);
-
-    // Only log meaningful movement (filters camera/landmark noise)
-    if (delta > 0.002) {
-      const now = Date.now();
-      headDisplacements.push({ delta, time: now });
-      headDisplacements = headDisplacements.filter(d => now - d.time <= HEAD_WINDOW_MS);
-      totalHeadActivity += delta;
-      updateHeadUI();
-    }
-  }
-
-  lastNosePos = { x: nose.x, y: nose.y };
-}
-
-function getHeadScore() {
-  const now = Date.now();
-  headDisplacements = headDisplacements.filter(d => now - d.time <= HEAD_WINDOW_MS);
-  return headDisplacements.reduce((sum, d) => sum + d.delta, 0);
-}
-
-function updateHeadUI() {
-  const score = getHeadScore();
-  const bar   = document.getElementById('headFill');
-  const label = document.getElementById('headStatus');
-  const val   = document.getElementById('headScore');
-
-  if (!bar) return;
-
-  val.textContent = score.toFixed(2);
-
-  const pct = Math.min((score / HEAD_HIGH_THRESH) * 100, 100);
-  bar.style.width = pct + '%';
-
-  let color, text, shouldAlert = false;
-  if (score < HEAD_MILD_THRESH) {
-    color = '#4ade80'; text = 'Still';
-  } else if (score < HEAD_MOD_THRESH) {
-    color = '#fbbf24'; text = 'Mild movement';
-  } else if (score < HEAD_HIGH_THRESH) {
-    color = '#fb923c'; text = 'Moderate movement';
-  } else {
-    color = '#ef4444'; text = 'High movement';
-    // Only alert if eyes are also unfocused (movementTs has recent eye activity).
-    // If eye movement count in last 10s is low, the person is concentrating —
-    // head shift is just a postural adjustment, not distraction.
-    const eyeActivityNow = movementTs.filter(t => Date.now() - t <= WINDOW_MS).length;
-    const isEyeFocused   = eyeActivityNow <= 2;
-    if (!headAlertActive && !isEyeFocused) shouldAlert = true;
-  }
-
-  bar.style.background  = color;
-  label.style.color     = color;
-  label.textContent     = text;
-
-  if (shouldAlert) triggerHeadAlert();
-}
-
-function triggerHeadAlert() {
-  headAlertActive = true;
-  const banner = document.getElementById('headBanner');
-  if (banner) banner.style.display = 'block';
-  clearTimeout(headAlertTimeout);
-  headAlertTimeout = setTimeout(() => {
-    if (banner) banner.style.display = 'none';
-    headAlertActive = false;
-  }, HEAD_ALERT_MS);
-}
-
-// Decay head score display every second even without movement
-setInterval(() => {
-  updateHeadUI();
-}, 1000);
-
-// ──────────────────────────────────────────
-//  STATE
-// ──────────────────────────────────────────
-let history          = [];
-let totalCount       = 0;
-let lastDir          = null;
-let lastLogTime      = 0;
-let movementTs       = [];
-let peakMoves        = 0;
-let alertCount       = 0;
-let isAlerting       = false;
-let alertTimeout     = null;
-let sessionStart     = Date.now();
-let dirCounts = { '← Left':0, '→ Right':0, '↑ Up':0, '↓ Down':0, '● Center':0 };
-
-// ──────────────────────────────────────────
-//  CANVAS SETUP
-// ──────────────────────────────────────────
-const video  = document.getElementById('video');
-const canvas = document.getElementById('overlay');
-const ctx    = canvas.getContext('2d');
-canvas.width = 640; canvas.height = 480;
-
-// Heatmap canvas
-const hmCanvas = document.getElementById('heatmapCanvas');
-const hmCtx    = hmCanvas.getContext('2d');
-function resizeHeatmap() {
-  const box = document.getElementById('heatmap').getBoundingClientRect();
-  hmCanvas.width  = box.width;
-  hmCanvas.height = box.height;
-}
-window.addEventListener('resize', resizeHeatmap);
-setTimeout(resizeHeatmap, 100);
-
-// ──────────────────────────────────────────
-//  LANDMARK INDICES
-// ──────────────────────────────────────────
-const LEFT_IRIS  = [468,469,470,471,472];
-const RIGHT_IRIS = [473,474,475,476,477];
-const LEFT_EYE   = [33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7];
-const RIGHT_EYE  = [362,398,384,385,386,387,388,466,263,249,390,373,374,380,381,382];
-
-// ──────────────────────────────────────────
-//  DIRECTION META
-// ──────────────────────────────────────────
-const META = {
-  '← Left':   { icon:'←', label:'Left',   cls:'dir-left',   bigIcon:'←', color:'#9d6ef8' },
-  '→ Right':  { icon:'→', label:'Right',  cls:'dir-right',  bigIcon:'→', color:'#00e5c3' },
-  '● Center': { icon:'●', label:'Center', cls:'dir-center', bigIcon:'●', color:'#f5a623' },
-  '↑ Up':     { icon:'↑', label:'Up',     cls:'dir-up',     bigIcon:'↑', color:'#f472b6' },
-  '↓ Down':   { icon:'↓', label:'Down',   cls:'dir-down',   bigIcon:'↓', color:'#fb923c' },
-};
-
-// ──────────────────────────────────────────
-//  SESSION TIMER
-// ──────────────────────────────────────────
-setInterval(() => {
-  const s = Math.floor((Date.now() - sessionStart) / 1000);
-  const m = Math.floor(s / 60);
-  document.getElementById('timer').textContent =
-    `${String(m).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
-}, 1000);
-
-// ── Focus meter auto-decay ──
-// Runs every second to update the meter even when no movement happens
-setInterval(() => {
-  const now = Date.now();
-  movementTs = movementTs.filter(t => now - t <= WINDOW_MS);
-  const count = movementTs.length;
-
-  document.getElementById('movePer10s').textContent = count;
-  document.getElementById('statMoves').textContent  = count;
-  updateFocusMeter(count);
-}, 1000);
-
-// ──────────────────────────────────────────
-//  HELPERS
-// ──────────────────────────────────────────
-function lm(landmarks, i) {
-  const p = landmarks[i];
-  return { x: p.x * canvas.width, y: p.y * canvas.height };
-}
-
-function ts() {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
-}
-
-// ──────────────────────────────────────────
-//  DRAW FUNCTIONS
-// ──────────────────────────────────────────
-function drawEyeOutline(landmarks, indices) {
-  ctx.beginPath();
-  const f = lm(landmarks, indices[0]);
-  ctx.moveTo(f.x, f.y);
-  for (let i = 1; i < indices.length; i++) {
-    const p = lm(landmarks, indices[i]);
-    ctx.lineTo(p.x, p.y);
-  }
-  ctx.closePath();
-  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-}
-
-function drawIris(landmarks, indices, color) {
-  const center = lm(landmarks, indices[0]);
-  const edge   = lm(landmarks, indices[1]);
-  const radius = Math.hypot(center.x - edge.x, center.y - edge.y);
-
-  // Glow ring
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, radius + 5, 0, Math.PI*2);
-  ctx.strokeStyle = color + '22';
-  ctx.lineWidth = 8;
-  ctx.stroke();
-
-  // Main circle
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, radius, 0, Math.PI*2);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Center dot
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, 3, 0, Math.PI*2);
-  ctx.fillStyle = color;
-  ctx.fill();
-
-  // Crosshair
-  const s = 8;
-  ctx.strokeStyle = color + '88';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(center.x - radius - s, center.y);
-  ctx.lineTo(center.x - radius + 4, center.y);
-  ctx.moveTo(center.x + radius - 4, center.y);
-  ctx.lineTo(center.x + radius + s, center.y);
-  ctx.moveTo(center.x, center.y - radius - s);
-  ctx.lineTo(center.x, center.y - radius + 4);
-  ctx.moveTo(center.x, center.y + radius - 4);
-  ctx.lineTo(center.x, center.y + radius + s);
-  ctx.stroke();
-
-  return { center, radius };
-}
-
-// ──────────────────────────────────────────
-//  GAZE DETECTION
-// ──────────────────────────────────────────
-function getHorizGaze(lc, rc, lEL, lER, rEL, rER) {
-  const lw = Math.hypot(lER.x-lEL.x, lER.y-lEL.y);
-  const rw = Math.hypot(rER.x-rEL.x, rER.y-rEL.y);
-  const lr = (lc.x - lEL.x) / lw;
-  const rr = (rc.x - rEL.x) / rw;
-  const avg = (lr + rr) / 2;
-  if (avg < 0.38) return '→ Right';
-  if (avg > 0.62) return '← Left';
-  return '● Center';
-}
-
-// Raw iris vertical ratio — positive = iris below eye corner midline (looking down)
-// Used by both getVertGaze() and classifyBlink() so both share the same signal
-function getVertGazeRatio(landmarks) {
-  const lCornerL = lm(landmarks, 33);
-  const lCornerR = lm(landmarks, 133);
-  const rCornerL = lm(landmarks, 362);
-  const rCornerR = lm(landmarks, 263);
-  const li = lm(landmarks, 468);
-  const ri = lm(landmarks, 473);
-
-  const leftWidth    = Math.hypot(lCornerR.x - lCornerL.x, lCornerR.y - lCornerL.y);
-  const rightWidth   = Math.hypot(rCornerR.x - rCornerL.x, rCornerR.y - rCornerL.y);
-  const leftCenterY  = (lCornerL.y + lCornerR.y) / 2;
-  const rightCenterY = (rCornerL.y + rCornerR.y) / 2;
-
-  const leftRatio  = (li.y - leftCenterY)  / leftWidth;
-  const rightRatio = (ri.y - rightCenterY) / rightWidth;
-  return (leftRatio + rightRatio) / 2;
-}
-
-function getVertGaze(landmarks) {
-  const avg = getVertGazeRatio(landmarks);
-  return getVertGazeFromRatio(avg);
-}
-
-// ──────────────────────────────────────────
-//  COMPASS
-// ──────────────────────────────────────────
-function updateCompass(dir) {
-  const dot = document.getElementById('compassDot');
-  const positions = {
-    '← Left':   { left:'25%', top:'50%' },
-    '→ Right':  { left:'75%', top:'50%' },
-    '● Center': { left:'50%', top:'50%' },
-    '↑ Up':     { left:'50%', top:'20%' },
-    '↓ Down':   { left:'50%', top:'80%' },
-  };
-  const pos = positions[dir] || { left:'50%', top:'50%' };
-  dot.style.left = pos.left;
-  dot.style.top  = pos.top;
-  dot.style.background   = META[dir]?.color || '#00e5c3';
-  dot.style.boxShadow    = `0 0 12px ${META[dir]?.color || '#00e5c3'}`;
-}
-
-// ──────────────────────────────────────────
-//  HEATMAP
-// ──────────────────────────────────────────
-
-// ──────────────────────────────────────────
-//  HEATMAP — dwell-based (samples every 200ms)
-// ──────────────────────────────────────────
-
-// heatGrid[row][col] = total dwell ticks at that cell
-const HEAT_COLS = 40;
-const HEAT_ROWS = 30;
-let heatGrid    = Array.from({length: HEAT_ROWS}, () => new Array(HEAT_COLS).fill(0));
-let currentGazeDir = null; // still used for movement log + compass
-let currentGazeH   = 0.5; // continuous horizontal ratio (raw, not bucketed)
-let currentGazeV   = 0.0; // continuous vertical ratio  (raw, not bucketed)
-
-// Continuous heatmap position from raw iris ratios.
-// horizRatio: ~0.25 (right) → ~0.75 (left), range [0.15, 0.85]
-// vertRatio:  ~-0.20 (up)   → ~+0.20 (down), range [-0.25, 0.25]
-// Both map to [0,1] for the heatmap canvas.
-function gazeToCell(horizRatio, vertRatio) {
-  // Horizontal: high ratio = iris on right side of eye = looking LEFT → left of heatmap
-  // Invert so left-gaze lands on the left side of the canvas
-  const rawX = 1 - ((horizRatio - 0.15) / 0.70);
-  const rawY = (vertRatio + 0.25) / 0.50;
-
-  // Clamp to [0,1] then add tiny jitter for a natural spread
-  const cx = Math.max(0, Math.min(1, rawX)) + (Math.random() - 0.5) * 0.03;
-  const cy = Math.max(0, Math.min(1, rawY)) + (Math.random() - 0.5) * 0.03;
-
-  const col = Math.max(0, Math.min(HEAT_COLS - 1, Math.floor(cx * HEAT_COLS)));
-  const row = Math.max(0, Math.min(HEAT_ROWS - 1, Math.floor(cy * HEAT_ROWS)));
-  return { col, row };
-}
-
-// Sample every 200ms — accumulates dwell time at continuous iris position
-setInterval(() => {
-  if (currentGazeH === null) return;
-  const { col, row } = gazeToCell(currentGazeH, currentGazeV);
-  heatGrid[row][col]++;
-  drawHeatmap();
-}, 200);
-
-function drawHeatmap() {
-  const w = hmCanvas.width;
-  const h = hmCanvas.height;
-  if (!w || !h) return;
-
-  hmCtx.clearRect(0, 0, w, h);
-  hmCtx.fillStyle = '#060910';
-  hmCtx.fillRect(0, 0, w, h);
-
-  // Find max value for normalizing colors
-  let maxVal = 1;
-  for (let r = 0; r < HEAT_ROWS; r++)
-    for (let c = 0; c < HEAT_COLS; c++)
-      if (heatGrid[r][c] > maxVal) maxVal = heatGrid[r][c];
-
-  const cellW = w / HEAT_COLS;
-  const cellH = h / HEAT_ROWS;
-  const radius = Math.max(cellW, cellH) * 1.8; // blob radius
-
-  // Draw each cell as a radial gradient blob
-  for (let r = 0; r < HEAT_ROWS; r++) {
-    for (let c = 0; c < HEAT_COLS; c++) {
-      const val = heatGrid[r][c];
-      if (val === 0) continue;
-
-      const norm = val / maxVal; // 0.0 → 1.0
-      const cx   = (c + 0.5) * cellW;
-      const cy   = (r + 0.5) * cellH;
-
-      // Color: low dwell = teal, mid = amber, high = red
-      let r1, g1, b1;
-      if (norm < 0.5) {
-        // teal → amber
-        const t = norm / 0.5;
-        r1 = Math.round(0   + t * 245);
-        g1 = Math.round(229 + t * (166 - 229));
-        b1 = Math.round(195 + t * (35 - 195));
-      } else {
-        // amber → red
-        const t = (norm - 0.5) / 0.5;
-        r1 = Math.round(245 + t * (239 - 245));
-        g1 = Math.round(166 + t * (68  - 166));
-        b1 = Math.round(35  + t * (68  - 35));
-      }
-
-      const alpha = 0.15 + norm * 0.55;
-      const grad  = hmCtx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-      grad.addColorStop(0,   `rgba(${r1},${g1},${b1},${alpha})`);
-      grad.addColorStop(0.5, `rgba(${r1},${g1},${b1},${alpha * 0.4})`);
-      grad.addColorStop(1,   `rgba(${r1},${g1},${b1},0)`);
-
-      hmCtx.fillStyle = grad;
-      hmCtx.beginPath();
-      hmCtx.arc(cx, cy, radius, 0, Math.PI * 2);
-      hmCtx.fill();
-    }
-  }
-
-  // Grid lines
-  hmCtx.strokeStyle = 'rgba(255,255,255,0.05)';
-  hmCtx.lineWidth   = 0.5;
-  for (let x = 0; x <= w; x += w / 3) {
-    hmCtx.beginPath(); hmCtx.moveTo(x, 0); hmCtx.lineTo(x, h); hmCtx.stroke();
-  }
-  for (let y = 0; y <= h; y += h / 3) {
-    hmCtx.beginPath(); hmCtx.moveTo(0, y); hmCtx.lineTo(w, y); hmCtx.stroke();
-  }
-}
-
-function clearHeatmap() {
-  heatGrid = Array.from({length: HEAT_ROWS}, () => new Array(HEAT_COLS).fill(0));
-  const w = hmCanvas.width, h = hmCanvas.height;
-  hmCtx.clearRect(0, 0, w, h);
-  hmCtx.fillStyle = '#060910';
-  hmCtx.fillRect(0, 0, w, h);
-}
-
-// ──────────────────────────────────────────
-//  HISTORY LOG
-// ──────────────────────────────────────────
-function logMovement(dir) {
-  const now = Date.now();
-  if (dir === lastDir || now - lastLogTime < THROTTLE_MS) return;
-  lastDir = dir; lastLogTime = now;
-
-  totalCount++;
-  dirCounts[dir] = (dirCounts[dir] || 0) + 1;
-
-  document.getElementById('totalMoves').textContent = totalCount;
-  document.getElementById('fLeft').textContent   = dirCounts['← Left']   || 0;
-  document.getElementById('fRight').textContent  = dirCounts['→ Right']  || 0;
-  document.getElementById('fUp').textContent     = dirCounts['↑ Up']     || 0;
-  document.getElementById('fDown').textContent   = dirCounts['↓ Down']   || 0;
-  document.getElementById('fCenter').textContent = dirCounts['● Center'] || 0;
-
-  history.unshift({ dir, time: ts(), id: totalCount });
-  if (history.length > 10) history.pop();
-
-  renderHistory();
-  recordMovementTime();
-}
-
-function renderHistory() {
-  const m = META;
-  document.getElementById('historyList').innerHTML = history.map((e, i) => `
-    <div class="h-item ${i >= 3 ? 'faded' : ''}">
-      <span class="h-num">${e.id}</span>
-      <span class="h-arrow ${m[e.dir].cls}">${m[e.dir].icon}</span>
-      <span class="h-dir  ${m[e.dir].cls}">${m[e.dir].label}</span>
-      <span class="h-time">${e.time}</span>
-    </div>`).join('');
-}
-
-function clearHistory() {
-  history = []; totalCount = 0; lastDir = null;
-  dirCounts = { '← Left':0, '→ Right':0, '↑ Up':0, '↓ Down':0, '● Center':0 };
-  blinkTimestamps = []; totalBlinks = 0;
-  document.getElementById('blinkRate').textContent  = '—';
-  document.getElementById('blinkTotal').textContent = '0';
-  document.getElementById('blinkStatus').textContent = 'collecting...';
-  document.getElementById('blinkFill').style.width = '0%';
-  headDisplacements = []; totalHeadActivity = 0; lastNosePos = null;
-  const hf = document.getElementById('headFill');
-  if (hf) { hf.style.width = '0%'; hf.style.background = '#4ade80'; }
-  const hs = document.getElementById('headStatus');
-  if (hs) { hs.textContent = 'Still'; hs.style.color = '#4ade80'; }
-  const hv = document.getElementById('headScore');
-  if (hv) hv.textContent = '0.00';
-  sessionStart = Date.now();
-  ['totalMoves','statMoves','statPeak','statAlerts','movePer10s',
-   'fLeft','fRight','fUp','fDown','fCenter'].forEach(id =>
-    document.getElementById(id).textContent = '0');
-  document.getElementById('historyList').innerHTML =
-    '<div style="text-align:center;padding:30px 0;font-size:0.72rem;color:var(--muted);font-family:var(--mono);">— awaiting movement —</div>';
-  updateFocusMeter(0);
-}
-
-// ──────────────────────────────────────────
-//  DISTRACTION DETECTION
-// ──────────────────────────────────────────
-function recordMovementTime() {
-  const now = Date.now();
-  movementTs.push(now);
-  movementTs = movementTs.filter(t => now - t <= WINDOW_MS);
-
-  const count = movementTs.length;
-  if (count > peakMoves) { peakMoves = count; document.getElementById('statPeak').textContent = peakMoves; }
-
-  document.getElementById('movePer10s').textContent = count;
-  document.getElementById('statMoves').textContent  = count;
-
-  updateFocusMeter(count);
-
-  if (count >= DISTRACT_THRESH && !isAlerting) triggerAlert();
-}
-
-function updateFocusMeter(count) {
-  const pct   = Math.min((count / DISTRACT_THRESH) * 100, 100);
-  const fill  = document.getElementById('meterFill');
-  const label = document.getElementById('focusLabel');
-
-  fill.style.width = pct + '%';
-
-  if (pct < 40) {
-    fill.style.background = '#4ade80'; label.style.color = '#4ade80'; label.textContent = 'Focused';
-  } else if (pct < 70) {
-    fill.style.background = '#fbbf24'; label.style.color = '#fbbf24'; label.textContent = 'Mild activity';
-  } else if (pct < 100) {
-    fill.style.background = '#fb923c'; label.style.color = '#fb923c'; label.textContent = 'High activity';
-  } else {
-    fill.style.background = '#ef4444'; label.style.color = '#ef4444'; label.textContent = 'Distracted!';
-  }
-}
-
-function triggerAlert() {
-  isAlerting = true;
-  alertCount++;
-  document.getElementById('statAlerts').textContent = alertCount;
-  document.getElementById('alertBanner').style.display = 'block';
-  clearTimeout(alertTimeout);
-  alertTimeout = setTimeout(() => {
-    document.getElementById('alertBanner').style.display = 'none';
-    isAlerting = false;
-  }, ALERT_MS);
-}
-
-// ──────────────────────────────────────────
-//  UPDATE UI
-// ──────────────────────────────────────────
-function updateGazeUI(dir) {
-  const m = META[dir];
-  if (!m) return;
-
-  // Big direction display
-  const big  = document.getElementById('dirBig');
-  const word = document.getElementById('dirWord');
-  big.textContent  = m.bigIcon;
-  word.textContent = m.label;
-  big.style.color  = m.color;
-  big.style.filter = `drop-shadow(0 0 20px ${m.color})`;
-
-  // Stat cell
-  document.getElementById('gazeDir').textContent = m.label;
-
-  // Compass
-  updateCompass(dir);
-}
-
-// ──────────────────────────────────────────
-//  MEDIAPIPE
-// ──────────────────────────────────────────
-function onResults(results) {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  if (!results.multiFaceLandmarks || !results.multiFaceLandmarks.length) {
-    setStatus('NO FACE', false);
-    return;
-  }
-
-  const lms = results.multiFaceLandmarks[0];
-
-  // ── Compute both signals upfront ──
-  // EAR  = eyelid openness  (blink signal)
-  // irisVertRatio = iris Y position relative to stable eye corners (gaze signal)
-  // Both are needed simultaneously to tell a blink from a downward gaze.
-  const avgEAR      = computeEAR(lms);
-  const irisVertRatio = getVertGazeRatio(lms);
-
-  const dbgEar = document.getElementById('dbgEar');
-  if (dbgEar) dbgEar.textContent = avgEAR.toFixed(3);
-
-  if (classifyBlink(avgEAR, irisVertRatio)) {
-    const dbgBlock = document.getElementById('dbgBlock');
-    if (dbgBlock) dbgBlock.textContent = blinkState;
-    setStatus('BLINK', true);
-    drawEyeOutline(lms, LEFT_EYE);
-    drawEyeOutline(lms, RIGHT_EYE);
-    return;
-  }
-
-  const dbgBlock = document.getElementById('dbgBlock');
-  if (dbgBlock) dbgBlock.textContent = 'none';
-  setStatus('TRACKING', true);
-
-  drawEyeOutline(lms, LEFT_EYE);
-  drawEyeOutline(lms, RIGHT_EYE);
-
-  const left  = drawIris(lms, LEFT_IRIS,  '#00e5c3');
-  const right = drawIris(lms, RIGHT_IRIS, '#9d6ef8');
-
-  document.getElementById('leftPos').textContent  = `${Math.round(left.center.x)}, ${Math.round(left.center.y)}`;
-  document.getElementById('rightPos').textContent = `${Math.round(right.center.x)}, ${Math.round(right.center.y)}`;
-
-  const lEL = lm(lms,33),  lER = lm(lms,133);
-  const rEL = lm(lms,362), rER = lm(lms,263);
-
-  // Raw continuous horizontal ratio (used by heatmap for full coverage)
-  const lw = Math.hypot(lER.x - lEL.x, lER.y - lEL.y);
-  const rw = Math.hypot(rER.x - rEL.x, rER.y - rEL.y);
-  const horizRatio = ((left.center.x - lEL.x) / lw + (right.center.x - rEL.x) / rw) / 2;
-
-  const horiz = getHorizGaze(left.center, right.center, lEL, lER, rEL, rER);
-  const vert  = getVertGazeFromRatio(irisVertRatio);
-  const dir   = vert ?? horiz;
-
-  // Store continuous ratios so the heatmap sampler can place dots anywhere,
-  // not just at the 5 fixed direction points
-  currentGazeH = horizRatio;
-  currentGazeV = irisVertRatio;
-
-  updateGazeUI(dir);
-  logMovement(dir);
-  currentGazeDir = dir;
-  trackHeadMovement(lms);
-}
-
-function setStatus(text, active) {
-  const pill = document.getElementById('statusPill');
-  const span = document.getElementById('statusText');
-  span.textContent = text;
-  pill.classList.toggle('active', active);
-}
-
-// Init
-const faceMesh = new FaceMesh({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
-});
-
-faceMesh.setOptions({
-  maxNumFaces: 1,
-  refineLandmarks: true,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5,
-});
-
-faceMesh.onResults(onResults);
-
-const camera = new Camera(video, {
-  onFrame: async () => { await faceMesh.send({ image: video }); },
-  width: 640, height: 480,
-});
-
-camera.start().then(() => setStatus('CAMERA ON', true));
-
-// Init heatmap background
-setTimeout(() => {
-  resizeHeatmap();
-  clearHeatmap();
-}, 200);
-</script>
 </body>
 </html>
