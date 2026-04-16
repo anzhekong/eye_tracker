@@ -573,7 +573,9 @@ const SessionManager = (() => {
   function newSession() {
     showScreen('screenIdle');
     const timerEl = document.getElementById('timerDisplay');
-    if (timerEl) timerEl.textContent = '00:00';
+    const countdownEl = document.getElementById('countdownDisplay');
+    if (timerEl) timerEl.textContent = formatCountdown(DEFAULT_SESSION_SEC);
+    if (countdownEl) countdownEl.textContent = formatCountdown(DEFAULT_SESSION_SEC);
   }
 
   function clearHistory() {
