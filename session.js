@@ -18,6 +18,7 @@ const SessionManager = (() => {
   const STORAGE_KEY   = 'eyetrace_sessions';
   const MAX_SESSIONS  = 50;
   const SAMPLE_INTERVAL_MS = 10000; // Record a focus data point every 10s
+  const DEFAULT_SESSION_SEC = 25 * 60;
 
   // ── Session state ──
   let activeSession   = null;
@@ -204,17 +205,25 @@ const SessionManager = (() => {
   // ─────────────────────────────────────────────────────────────────────────
   // UI helpers — show/hide screens
   // ─────────────────────────────────────────────────────────────────────────
+  
   function showScreen(id) {
     ['screenIdle','screenActive','screenReport'].forEach(s => {
       const el = document.getElementById(s);
       if (el) el.classList.toggle('active', s === id);
     });
+    document.body.classList.toggle('focus-mode', id === 'screenActive');
   }
 
   function formatDuration(seconds) {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${s}s`;
+  }
+  function formatCountdown(seconds) {
+    const safe = Math.max(0, seconds);
+    const m = Math.floor(safe / 60);
+    const s = safe % 60;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   }
 
   function formatDate(isoString) {
@@ -376,6 +385,16 @@ const SessionManager = (() => {
     // Configure tracker
     Tracker.setOptions({ blink: sessionSettings.blink, head: sessionSettings.head });
     Tracker.resetSession();
+    const gazeCanvas = document.getElementById('gazeMapCanvas');
+    if (gazeCanvas) {
+      GazeMap.init(gazeCanvas);
+      GazeMap.clear();
+    }
+    Tracker.onFrame = (frame) => {
+      if (frame && frame.gazePoint) {
+        GazeMap.addPoint(frame.gazePoint);
+      }
+    };
 
     // Wire tracker events
     let eyeMoveCount = 0;
@@ -415,19 +434,30 @@ const SessionManager = (() => {
     showScreen('screenActive');
 
     // Session timer
-    const timerEl  = document.getElementById('timerDisplay');
-    const camTimer = document.getElementById('camTimer');
+    const timerEl = document.getElementById('timerDisplay');
+    const countdownEl = document.getElementById('countdownDisplay');
     const sessionTimerEl = document.getElementById('sessionTimer');
+
     if (sessionTimerEl) sessionTimerEl.classList.add('visible');
-    if (camTimer) camTimer.classList.add('visible');
 
     let elapsedSeconds = 0;
+    let remainingSeconds = DEFAULT_SESSION_SEC;
+
+    if (timerEl) timerEl.textContent = formatCountdown(remainingSeconds);
+    if (countdownEl) countdownEl.textContent = formatCountdown(remainingSeconds);
+
     timerInterval = setInterval(() => {
       elapsedSeconds++;
+      remainingSeconds--;
       activeSession.duration = elapsedSeconds;
-      const str = formatDuration(elapsedSeconds);
-      if (timerEl)  timerEl.textContent  = str;
-      if (camTimer) camTimer.textContent = str;
+
+      const label = formatCountdown(remainingSeconds);
+      if (timerEl) timerEl.textContent = label;
+      if (countdownEl) countdownEl.textContent = label;
+
+      if (remainingSeconds <= 0) {
+        end();
+      }
     }, 1000);
 
     // ── Fast display refresh (every 1s) ──
@@ -532,7 +562,7 @@ const SessionManager = (() => {
 
     // Update history sidebar
     renderHistory();
-
+    GazeMap.clear();
     // Show report
     showReport(completed);
   }
