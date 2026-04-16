@@ -289,15 +289,18 @@ const Tracker = (() => {
     if (opts.head) trackHead(lms);
 
     // Fire onFrame with all current measurements
-    if (onFrame) {
-      onFrame({
-        ear:        avgEAR,
-        vertRatio:  vertRatio,
-        horizRatio: horizRatio,
-        dir:        dir,
-        headScore:  opts.head  ? getHeadScore()   : null,
-        blinkRate:  opts.blink ? getBlinkRate()   : null,
+      if (onFrame) {
+        onFrame({
+          ear:        avgEAR,
+          vertRatio:  vertRatio,
+          horizRatio: horizRatio,
+          dir:        dir,
+          gazePoint:  gazePoint,
+          headScore:  opts.head  ? getHeadScore()   : null,
+          blinkRate:  opts.blink ? getBlinkRate()   : null,
       });
+}
+      
     }
   }
 
