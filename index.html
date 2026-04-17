@@ -37,157 +37,134 @@
     <!-- ── MAIN COLUMN ── -->
     <div class="main-col">
 
-      <!-- Camera (always shown once MediaPipe loads) -->
-      <div class="camera-wrap" id="cameraWrap">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="overlay"></canvas>
-        <div class="scanline"></div>
-        <!-- Floating session timer overlay during active session -->
-        <div class="cam-timer" id="camTimer"></div>
-      </div>
+  <!-- Hidden sensor layer: required by Tracker.start(video, overlay) -->
+  <div class="sensor-layer" aria-hidden="true">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
 
-      <!-- Debug strip (below camera, always) -->
-      <div class="debug-strip">
-        <div class="dbg-item">
-          <span class="dbg-label">VERT</span>
-          <span id="dbgRatio" class="dbg-val" style="color:var(--teal)">—</span>
-        </div>
-        <div class="dbg-item">
-          <span class="dbg-label">EAR</span>
-          <span id="dbgEar" class="dbg-val" style="color:var(--amber)">—</span>
-        </div>
-        <div class="dbg-item">
-          <span class="dbg-label">BLINK</span>
-          <span id="dbgBlock" class="dbg-val" style="color:var(--red)">—</span>
-        </div>
-        <div class="dbg-item">
-          <span class="dbg-label">GAZE</span>
-          <span id="dbgGaze" class="dbg-val" style="color:var(--purple)">—</span>
-        </div>
-      </div>
+  <!-- Optional debug strip -->
+  <div class="debug-strip">
+    <div class="dbg-item">
+      <span class="dbg-label">VERT</span>
+      <span id="dbgRatio" class="dbg-val" style="color:var(--teal)">—</span>
+    </div>
+    <div class="dbg-item">
+      <span class="dbg-label">EAR</span>
+      <span id="dbgEar" class="dbg-val" style="color:var(--amber)">—</span>
+    </div>
+    <div class="dbg-item">
+      <span class="dbg-label">BLINK</span>
+      <span id="dbgBlock" class="dbg-val" style="color:var(--red)">—</span>
+    </div>
+    <div class="dbg-item">
+      <span class="dbg-label">GAZE</span>
+      <span id="dbgGaze" class="dbg-val" style="color:var(--purple)">—</span>
+    </div>
+  </div>
 
-      <!-- ── SCREEN: IDLE ── -->
-      <div id="screenIdle" class="screen active">
-        <div class="idle-wrap">
-          <p class="idle-hint">Configure your session and press Start when ready.</p>
+  <!-- SCREEN: IDLE -->
+  <div id="screenIdle" class="screen active">
+    <div class="launch-wrap">
+      <div class="launch-frame">
+        <div class="launch-timer">25:00</div>
+        <div class="launch-sub">Start a focus session</div>
 
-          <div class="settings-card">
-            <div class="settings-title">TRACKING OPTIONS</div>
-
-            <label class="toggle-row">
-              <div class="toggle-info">
-                <span class="toggle-label">Blink detection</span>
-                <span class="toggle-sub">Measures fatigue from blink rate (Andreassi 2000)</span>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="toggleBlink" checked>
-                <span class="slider"></span>
-              </label>
+        <div class="launch-settings">
+          <label class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Blink detection</span>
+              <span class="toggle-sub">Keep fatigue tracking enabled</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggleBlink" checked>
+              <span class="slider"></span>
             </label>
+          </label>
 
-            <label class="toggle-row">
-              <div class="toggle-info">
-                <span class="toggle-label">Head movement</span>
-                <span class="toggle-sub">Flags distraction from excessive head shifts</span>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="toggleHead" checked>
-                <span class="slider"></span>
-              </label>
+          <label class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Head movement</span>
+              <span class="toggle-sub">Keep distraction tracking enabled</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggleHead" checked>
+              <span class="slider"></span>
             </label>
+          </label>
 
-            <div class="threshold-row">
-              <div class="toggle-info">
-                <span class="toggle-label">Eye movement threshold</span>
-                <span class="toggle-sub">Max gaze shifts / 10s before distraction logged</span>
-              </div>
-              <div class="threshold-control">
-                <input type="range" id="threshSlider" min="3" max="12" value="6"
-                  oninput="document.getElementById('threshDisp').textContent = this.value">
-                <span class="thresh-val" id="threshDisp">6</span>
-              </div>
+          <div class="threshold-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Eye movement threshold</span>
+              <span class="toggle-sub">Max gaze shifts / 10s before distraction logged</span>
+            </div>
+            <div class="threshold-control">
+              <input type="range" id="threshSlider" min="3" max="12" value="6"
+                oninput="document.getElementById('threshDisp').textContent = this.value">
+              <span class="thresh-val" id="threshDisp">6</span>
             </div>
           </div>
+        </div>
 
-          <button class="btn-start" onclick="SessionManager.start()">
-            ▶ &nbsp;START SESSION
-          </button>
+        <button class="btn-start center-start" onclick="SessionManager.start()">
+          START SESSION
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN: ACTIVE -->
+  <div id="screenActive" class="screen">
+    <div class="focus-stage">
+      <canvas id="gazeMapCanvas" class="gaze-map-canvas"></canvas>
+      <div class="focus-stage-frame"></div>
+
+      <div class="timer-center-wrap">
+        <div class="timer-readout" id="countdownDisplay">25:00</div>
+        <button class="btn-end floating-end" onclick="SessionManager.end()">
+          END SESSION
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN: REPORT -->
+  <div id="screenReport" class="screen">
+    <div class="report-wrap">
+
+      <div class="report-top">
+        <div class="report-score-block">
+          <div class="report-score-label">AVG FOCUS</div>
+          <div class="report-score-value" id="reportAvgScore">—</div>
+        </div>
+        <div class="report-meta" id="reportMeta"></div>
+      </div>
+
+      <div class="chart-wrap">
+        <canvas id="focusChart"></canvas>
+        <div class="chart-y-labels">
+          <span>100</span><span>75</span><span>50</span><span>25</span><span>0</span>
         </div>
       </div>
 
-      <!-- ── SCREEN: ACTIVE ── -->
-      <div id="screenActive" class="screen">
-        <div class="active-wrap">
-          <div class="live-stats-row">
-            <div class="live-card">
-              <div class="live-label">FOCUS</div>
-              <div class="live-big" id="liveFocusScore">—</div>
-            </div>
-            <div class="live-card">
-              <div class="live-label">GAZE</div>
-              <div class="live-big" id="liveGazDir">—</div>
-            </div>
-            <div class="live-card" id="liveBlinkCard">
-              <div class="live-label">BLINKS/MIN</div>
-              <div class="live-big" id="liveBlinkRate">—</div>
-            </div>
-            <div class="live-card" id="liveHeadCard">
-              <div class="live-label">HEAD</div>
-              <div class="live-big" id="liveHeadScore">—</div>
-            </div>
-          </div>
-
-          <div class="focus-bar-wrap">
-            <div class="focus-bar-track">
-              <div class="focus-bar-fill" id="focusBarFill"></div>
-            </div>
-            <div class="focus-bar-labels">
-              <span>Distracted</span><span>Focused</span>
-            </div>
-          </div>
-
-          <button class="btn-end" onclick="SessionManager.end()">
-            ■ &nbsp;END SESSION
-          </button>
-        </div>
+      <div class="chart-legend">
+        <span class="legend-dot green"></span>Focused (70–100)
+        <span class="legend-dot yellow"></span>Mild (40–70)
+        <span class="legend-dot red"></span>Distracted (0–40)
       </div>
 
-      <!-- ── SCREEN: REPORT ── -->
-      <div id="screenReport" class="screen">
-        <div class="report-wrap">
+      <div class="report-stats-row" id="reportStatsRow"></div>
 
-          <div class="report-top">
-            <div class="report-score-block">
-              <div class="report-score-label">AVG FOCUS</div>
-              <div class="report-score-value" id="reportAvgScore">—</div>
-            </div>
-            <div class="report-meta" id="reportMeta"></div>
-          </div>
-
-          <div class="chart-wrap">
-            <canvas id="focusChart"></canvas>
-            <div class="chart-y-labels">
-              <span>100</span><span>75</span><span>50</span><span>25</span><span>0</span>
-            </div>
-          </div>
-          <div class="chart-legend">
-            <span class="legend-dot green"></span>Focused (70–100)
-            <span class="legend-dot yellow"></span>Mild (40–70)
-            <span class="legend-dot red"></span>Distracted (0–40)
-          </div>
-
-          <div class="report-stats-row" id="reportStatsRow"></div>
-
-          <div class="report-actions">
-            <button class="btn-start" onclick="SessionManager.newSession()">
-              ▶ &nbsp;NEW SESSION
-            </button>
-          </div>
-
-        </div>
+      <div class="report-actions">
+        <button class="btn-start" onclick="SessionManager.newSession()">
+          NEW SESSION
+        </button>
       </div>
 
-    </div><!-- /main-col -->
+    </div>
+  </div>
+
+</div>
 
     <!-- ── HISTORY SIDEBAR ── -->
     <aside class="history-sidebar">
@@ -207,6 +184,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="tracker.js"></script>
+<script src="gaze-map.js"></script>
 <script src="session.js"></script>
 
 </body>
