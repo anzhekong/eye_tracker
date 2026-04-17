@@ -19,6 +19,58 @@ const SessionManager = (() => {
   const MAX_SESSIONS  = 50;
   const SAMPLE_INTERVAL_MS = 10000; // Record a focus data point every 10s
 
+  // Gaze heatmap resolution — points are binned into this grid during a
+  // session and persisted so the report / history modal can render it.
+  const HEATMAP_W = 48;
+  const HEATMAP_H = 32;
+
+  // ── Tomato-style timer presets ──────────────────────────────────────────
+  // Stored as an array of integers (minutes). Capped at MAX_PRESETS.
+  // The literal value 0 is reserved for "open-ended" (no countdown).
+  const PRESETS_KEY = 'eyetrace_presets';
+  const MAX_PRESETS = 10;
+  const DEFAULT_PRESETS = [15, 25, 50]; // classic short / Pomodoro / long
+
+  function loadPresets() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(PRESETS_KEY) || 'null');
+      if (Array.isArray(raw) && raw.length) {
+        return raw.filter(n => Number.isFinite(n) && n > 0 && n <= 240).slice(0, MAX_PRESETS);
+      }
+    } catch {}
+    return [...DEFAULT_PRESETS];
+  }
+  function savePresets(arr) {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(arr.slice(0, MAX_PRESETS)));
+  }
+  function addPreset(minutes) {
+    const m = Math.round(Number(minutes));
+    if (!m || m <= 0 || m > 240) return false;
+    const list = loadPresets();
+    if (list.includes(m)) return false;
+    if (list.length >= MAX_PRESETS) return false;
+    list.push(m);
+    list.sort((a, b) => a - b);
+    savePresets(list);
+    return true;
+  }
+  function removePreset(minutes) {
+    const list = loadPresets().filter(m => m !== minutes);
+    savePresets(list);
+  }
+
+  // Selected duration for the next session, in seconds. 0 = open-ended.
+  let selectedDurationSec = 0;
+
+  // ── Personalized scoring ──────────────────────────────────────────────
+  // We keep a rolling pool of per-sample measurements across all sessions
+  // and use the median / MAD of that pool as each user's personal baseline.
+  // Once the user has completed MIN_CALIB_SESSIONS, calcFocusScore will
+  // switch from hard-coded tiers to z-score-based penalties.
+  const PROFILE_KEY           = 'eyetrace_profile';
+  const MIN_CALIB_SESSIONS    = 3;
+  const MAX_SAMPLES_PER_SIGNAL = 600;
+
   // ── Session state ──
   let activeSession   = null;
   let sampleInterval  = null;
@@ -31,32 +83,140 @@ const SessionManager = (() => {
   let sampleBlinks    = 0;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Focus scoring
-  // Returns 0–100 based on current measurements
+  // User profile — rolling baseline samples for personalized scoring
   // ─────────────────────────────────────────────────────────────────────────
-  function calcFocusScore(eyeMoves, blinkRate, headScore) {
+  function defaultProfile() {
+    return {
+      sessionCount:    0,
+      personalized:    true, // toggled from the idle UI
+      eyeMovesSamples: [],   // per-sample gaze-shifts-per-10s values
+      blinkRateSamples: [],
+      headScoreSamples: [],
+    };
+  }
+
+  function loadProfile() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null');
+      if (!raw) return defaultProfile();
+      return Object.assign(defaultProfile(), raw);
+    } catch { return defaultProfile(); }
+  }
+
+  function saveProfile(p) {
+    localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+  }
+
+  function updateProfileFromSession(session) {
+    const p = loadProfile();
+    p.sessionCount++;
+    session.timeline.forEach(pt => {
+      if (typeof pt.eyeMoves  === 'number') p.eyeMovesSamples.push(pt.eyeMoves);
+      if (typeof pt.blinkRate === 'number') p.blinkRateSamples.push(pt.blinkRate);
+      if (typeof pt.headScore === 'number') p.headScoreSamples.push(pt.headScore);
+    });
+    p.eyeMovesSamples  = p.eyeMovesSamples .slice(-MAX_SAMPLES_PER_SIGNAL);
+    p.blinkRateSamples = p.blinkRateSamples.slice(-MAX_SAMPLES_PER_SIGNAL);
+    p.headScoreSamples = p.headScoreSamples.slice(-MAX_SAMPLES_PER_SIGNAL);
+    saveProfile(p);
+    return p;
+  }
+
+  function resetProfile() {
+    // Keep the personalized toggle state, but clear learned samples
+    const current = loadProfile();
+    const fresh   = defaultProfile();
+    fresh.personalized = current.personalized;
+    saveProfile(fresh);
+    return fresh;
+  }
+
+  function median(arr) {
+    if (!arr || arr.length === 0) return null;
+    const s = [...arr].sort((a,b)=>a-b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
+  }
+  // Median Absolute Deviation — robust analog of std dev (× 1.4826 for normality)
+  function mad(arr, med) {
+    if (!arr || arr.length === 0 || med == null) return null;
+    const devs = arr.map(x => Math.abs(x - med)).sort((a,b)=>a-b);
+    const m = Math.floor(devs.length / 2);
+    const raw = devs.length % 2 ? devs[m] : (devs[m-1] + devs[m]) / 2;
+    return raw * 1.4826;
+  }
+  function computeBaseline(profile) {
+    const eMed = median(profile.eyeMovesSamples);
+    const bMed = median(profile.blinkRateSamples);
+    const hMed = median(profile.headScoreSamples);
+    return {
+      eyeMoves:  { med: eMed, mad: mad(profile.eyeMovesSamples,  eMed) },
+      blinkRate: { med: bMed, mad: mad(profile.blinkRateSamples, bMed) },
+      headScore: { med: hMed, mad: mad(profile.headScoreSamples, hMed) },
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Focus scoring
+  //   Returns 0–100.  Two modes:
+  //     • "classic"       — hard-coded tiers (used before calibration or when
+  //                         the user has turned personalized scoring off).
+  //     • "personalized"  — z-score penalties against the user's own median
+  //                         and MAD from past sessions.
+  // ─────────────────────────────────────────────────────────────────────────
+  function calcFocusScoreClassic(eyeMoves, blinkRate, headScore) {
     let score = 100;
     const threshold = sessionSettings.threshold;
 
-    // Eye movement penalty — relative to user's threshold
-    if (eyeMoves > threshold * 1.5) score -= 40;
-    else if (eyeMoves > threshold)   score -= 20;
+    if      (eyeMoves > threshold * 1.5) score -= 40;
+    else if (eyeMoves > threshold)       score -= 20;
     else if (eyeMoves > threshold * 0.5) score -= 8;
 
-    // Blink rate penalty (only if blink detection is on)
     if (sessionSettings.blink && blinkRate !== null) {
       if      (blinkRate > 35) score -= 25;
       else if (blinkRate > 25) score -= 15;
       else if (blinkRate < 6)  score -= 10;
     }
-
-    // Head movement penalty (only if head detection is on)
     if (sessionSettings.head && headScore !== null) {
       if      (headScore > 3.0) score -= 30;
       else if (headScore > 1.5) score -= 15;
     }
-
     return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  function calcFocusScorePersonalized(eyeMoves, blinkRate, headScore, baseline) {
+    let score = 100;
+    const zEye   = (baseline.eyeMoves.mad > 0) ? (eyeMoves - baseline.eyeMoves.med) / baseline.eyeMoves.mad : 0;
+    if      (zEye > 2)   score -= 40;
+    else if (zEye > 1)   score -= 20;
+    else if (zEye > 0.5) score -= 8;
+
+    if (sessionSettings.blink && blinkRate !== null && baseline.blinkRate.med !== null) {
+      // Penalize deviation in either direction (too slow = staring, too fast = fatigue)
+      const zB = (baseline.blinkRate.mad > 0) ? Math.abs((blinkRate - baseline.blinkRate.med) / baseline.blinkRate.mad) : 0;
+      if      (zB > 2)   score -= 25;
+      else if (zB > 1)   score -= 15;
+    }
+    if (sessionSettings.head && headScore !== null && baseline.headScore.med !== null) {
+      const zH = (baseline.headScore.mad > 0) ? (headScore - baseline.headScore.med) / baseline.headScore.mad : 0;
+      if      (zH > 2)   score -= 30;
+      else if (zH > 1)   score -= 15;
+    }
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  function calcFocusScore(eyeMoves, blinkRate, headScore) {
+    const profile = loadProfile();
+    const ready   = profile.personalized && profile.sessionCount >= MIN_CALIB_SESSIONS;
+    if (!ready) {
+      return calcFocusScoreClassic(eyeMoves, blinkRate, headScore);
+    }
+    const baseline = computeBaseline(profile);
+    // If any critical baseline is missing, fall back to classic for safety.
+    if (baseline.eyeMoves.med == null) {
+      return calcFocusScoreClassic(eyeMoves, blinkRate, headScore);
+    }
+    return calcFocusScorePersonalized(eyeMoves, blinkRate, headScore, baseline);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -160,6 +320,90 @@ const SessionManager = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Gaze heatmap rendering — classic blue → cyan → green → yellow → red
+  // Takes a flat grid of counts plus its dimensions and draws a smooth
+  // heatmap onto the provided canvas element.
+  // ─────────────────────────────────────────────────────────────────────────
+  function jetColor(v) {
+    // v in [0, 1] → [r, g, b] using a standard jet-like colormap.
+    const t = Math.max(0, Math.min(1, v));
+    let r, g, b;
+    if (t < 0.25)      { r = 0;                       g = Math.round(4 * t * 255);              b = 255; }
+    else if (t < 0.5)  { r = 0;                       g = 255;                                  b = Math.round((1 - 4*(t-0.25)) * 255); }
+    else if (t < 0.75) { r = Math.round(4*(t-0.5)*255); g = 255;                                b = 0; }
+    else               { r = 255;                     g = Math.round((1 - 4*(t-0.75)) * 255);   b = 0; }
+    return [r, g, b];
+  }
+
+  function renderHeatmap(canvasEl, grid, gridW, gridH) {
+    if (!canvasEl) return;
+    // Fall back gracefully when a session has no heatmap data
+    const hasData = grid && grid.some(v => v > 0);
+    const rect = canvasEl.getBoundingClientRect();
+    const W = Math.max(rect.width || canvasEl.offsetWidth || 320, 240);
+    const H = 180;
+    const dpr = window.devicePixelRatio || 1;
+    canvasEl.width  = Math.round(W * dpr);
+    canvasEl.height = Math.round(H * dpr);
+    canvasEl.style.width  = W + 'px';
+    canvasEl.style.height = H + 'px';
+    const ctx = canvasEl.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Dark panel background
+    ctx.fillStyle = '#0b0f14';
+    ctx.fillRect(0, 0, W, H);
+
+    if (!hasData) {
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.7)';
+      ctx.font = "11px 'Space Mono', monospace";
+      ctx.textAlign = 'center';
+      ctx.fillText('NO GAZE DATA', W / 2, H / 2);
+      return;
+    }
+
+    // Find the max cell so we can normalize to [0,1]
+    let maxV = 0;
+    for (let i = 0; i < grid.length; i++) if (grid[i] > maxV) maxV = grid[i];
+
+    const cellW = W / gridW;
+    const cellH = H / gridH;
+    // Blob radius should overlap neighbors for a smooth look
+    const radius = Math.max(cellW, cellH) * 1.8;
+
+    // Render each non-zero cell as a radial gradient whose color comes
+    // from the jet palette. Using 'lighter' composites accumulates
+    // intensity where blobs overlap, producing smooth hot spots.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        const v = grid[y * gridW + x];
+        if (v === 0) continue;
+        const t = v / maxV;
+        const [r, g, b] = jetColor(t);
+        const cx = (x + 0.5) * cellW;
+        const cy = (y + 0.5) * cellH;
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+        const peak = 0.35 * t + 0.15;
+        grad.addColorStop(0,    `rgba(${r},${g},${b},${peak})`);
+        grad.addColorStop(0.55, `rgba(${r},${g},${b},${peak * 0.35})`);
+        grad.addColorStop(1,    `rgba(${r},${g},${b},0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+
+    // Subtle frame so the heatmap stands apart from the card
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+    ctx.lineWidth   = 1;
+    ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Mini chart for history items (tiny sparkline)
   // ─────────────────────────────────────────────────────────────────────────
   function renderMiniChart(canvasEl, timeline) {
@@ -201,13 +445,26 @@ const SessionManager = (() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // UI helpers — show/hide screens
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Helper: set a value + color on an element by ID (safe, no-op if missing) ──
+  function setEl(id, text, color) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (text  !== undefined) el.textContent = text;
+    if (color !== undefined) el.style.color = color;
+  }
+
+  // ── Show the right screen on BOTH desktop and mobile ──
   function showScreen(id) {
+    // Desktop screens
     ['screenIdle','screenActive','screenReport'].forEach(s => {
       const el = document.getElementById(s);
       if (el) el.classList.toggle('active', s === id);
+    });
+    // Mobile screens (prefixed with m-)
+    ['m-screenIdle','m-screenActive','m-screenReport'].forEach(s => {
+      const el = document.getElementById(s);
+      const matches = s === 'm-' + id;
+      if (el) el.classList.toggle('active', matches);
     });
   }
 
@@ -224,42 +481,39 @@ const SessionManager = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Live UI update during active session
+  // Live UI — updates BOTH desktop and mobile elements every 0.5s
   // ─────────────────────────────────────────────────────────────────────────
   function updateLiveUI(score, dir, blinkRate, headScore) {
-    const focusEl = document.getElementById('liveFocusScore');
-    const gazeEl  = document.getElementById('liveGazDir');
-    const blinkEl = document.getElementById('liveBlinkRate');
-    const headEl  = document.getElementById('liveHeadScore');
-    const barEl   = document.getElementById('focusBarFill');
+    const focusColor = score >= 70 ? 'var(--green)' : score >= 40 ? 'var(--yellow)' : 'var(--red)';
+    const DIR_META   = { '← Left':'← L', '→ Right':'→ R', '● Center':'●', '↑ Up':'↑', '↓ Down':'↓' };
+    const dirText    = DIR_META[dir] || '—';
+    const blinkColor = blinkRate === null ? 'var(--teal)'
+      : (blinkRate>=6 && blinkRate<=20) ? 'var(--green)' : blinkRate>25 ? 'var(--red)' : 'var(--yellow)';
+    const headColor  = headScore === null ? 'var(--teal)'
+      : headScore < 0.5 ? 'var(--green)' : headScore < 1.5 ? 'var(--yellow)' : 'var(--red)';
 
-    if (focusEl) {
-      focusEl.textContent = score + '%';
-      focusEl.style.color = score >= 70 ? 'var(--green)' : score >= 40 ? 'var(--yellow)' : 'var(--red)';
-    }
+    // Desktop elements
+    setEl('liveFocusScore', score + '%', focusColor);
+    setEl('liveGazDir',     dirText);
+    setEl('liveBlinkRate',  blinkRate !== null ? String(blinkRate) : '—', blinkColor);
+    setEl('liveHeadScore',  headScore !== null ? headScore.toFixed(1) : '—', headColor);
+    const bar = document.getElementById('focusBarFill');
+    if (bar) { bar.style.width = score + '%'; bar.style.background = focusColor; }
 
-    const DIR_META = {
-      '← Left':   '← L', '→ Right': '→ R', '● Center': '●',
-      '↑ Up':     '↑',   '↓ Down':  '↓',
-    };
-    if (gazeEl) gazeEl.textContent = DIR_META[dir] || '—';
+    // Mobile elements
+    setEl('m-liveGazDir',    dirText);
+    setEl('m-liveBlinkRate', blinkRate !== null ? String(blinkRate) : '—', blinkColor);
+    setEl('m-liveHeadScore', headScore !== null ? headScore.toFixed(1) : '—', headColor);
+    const mBar = document.getElementById('m-focusBarFill');
+    if (mBar) { mBar.style.width = score + '%'; mBar.style.background = focusColor; }
 
-    if (blinkEl) {
-      blinkEl.textContent = blinkRate !== null ? blinkRate : '—';
-      if (blinkRate !== null) {
-        blinkEl.style.color = (blinkRate>=6 && blinkRate<=20) ? 'var(--green)'
-          : blinkRate > 25 ? 'var(--red)' : 'var(--yellow)';
-      }
-    }
-
-    if (headEl && headScore !== null) {
-      headEl.textContent  = headScore.toFixed(1);
-      headEl.style.color  = headScore < 0.5 ? 'var(--green)' : headScore < 1.5 ? 'var(--yellow)' : 'var(--red)';
-    }
-
-    if (barEl) {
-      barEl.style.width      = score + '%';
-      barEl.style.background = score >= 70 ? 'var(--green)' : score >= 40 ? 'var(--yellow)' : 'var(--red)';
+    // Mobile camera focus badge
+    const badge    = document.getElementById('m-focusBadge');
+    const badgeVal = document.getElementById('m-focusBadgeVal');
+    if (badge && badgeVal) {
+      badge.classList.add('visible');
+      badgeVal.textContent  = score + '%';
+      badgeVal.style.color  = focusColor;
     }
   }
 
@@ -267,36 +521,34 @@ const SessionManager = (() => {
   // History list rendering
   // ─────────────────────────────────────────────────────────────────────────
   function renderHistory() {
-    const list = document.getElementById('historyList');
-    if (!list) return;
-
     const sessions = loadSessions();
-    if (sessions.length === 0) {
-      list.innerHTML = '<div class="history-empty">No sessions recorded yet.<br>Start your first session!</div>';
-      return;
-    }
+    const html = sessions.length === 0
+      ? '<div class="history-empty">No sessions recorded yet.<br>Start your first session!</div>'
+      : sessions.map((s, idx) => {
+          const avg   = s.summary.avgFocus;
+          const badge = avg >= 70 ? 'good' : avg >= 40 ? 'ok' : 'poor';
+          return `
+            <div class="history-item" onclick="SessionManager.viewSession(${idx})">
+              <div class="hi-top">
+                <span class="hi-date">${formatDate(s.date)}</span>
+                <span class="hi-badge ${badge}">${avg}%</span>
+              </div>
+              <div class="hi-duration">
+                <span>${formatDuration(s.duration)}</span>
+                ${s.settings.blink ? ' · Blink ✓' : ''}
+                ${s.settings.head  ? ' · Head ✓'  : ''}
+              </div>
+              <canvas class="mini-chart" id="miniChart${idx}" style="width:100%;height:36px;margin-top:7px;border-radius:4px;display:block;"></canvas>
+            </div>`;
+        }).join('');
 
-    list.innerHTML = sessions.map((s, idx) => {
-      const avg     = s.summary.avgFocus;
-      const badge   = avg >= 70 ? 'good' : avg >= 40 ? 'ok' : 'poor';
-      const dateStr = formatDate(s.date);
-      const durStr  = formatDuration(s.duration);
-      return `
-        <div class="history-item" onclick="SessionManager.viewSession(${idx})">
-          <div class="hi-top">
-            <span class="hi-date">${dateStr}</span>
-            <span class="hi-badge ${badge}">${avg}%</span>
-          </div>
-          <div class="hi-duration">
-            <span>${durStr}</span>
-            ${s.settings.blink ? ' · Blink ✓' : ''}
-            ${s.settings.head  ? ' · Head ✓'  : ''}
-          </div>
-          <canvas class="mini-chart" id="miniChart${idx}" style="width:100%;margin-top:8px;border-radius:4px;"></canvas>
-        </div>`;
-    }).join('');
+    // Push to both desktop and mobile lists
+    ['historyList', 'm-historyList'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    });
 
-    // Render mini sparklines after DOM update
+    // Render sparklines after paint
     requestAnimationFrame(() => {
       sessions.forEach((s, idx) => {
         const mc = document.getElementById(`miniChart${idx}`);
@@ -306,67 +558,462 @@ const SessionManager = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Preset chips — render the tomato-timer duration chooser on the idle
+  // screen (both desktop and mobile). Always includes an "Open" chip that
+  // means run open-ended (no countdown, end manually).
+  // ─────────────────────────────────────────────────────────────────────────
+  function formatPresetLabel(min) {
+    if (min < 60) return min + 'm';
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m === 0 ? h + 'h' : h + 'h' + m + 'm';
+  }
+
+  function renderPresets() {
+    const presets = loadPresets();
+    const canAddMore = presets.length < MAX_PRESETS;
+    const sel = selectedDurationSec;
+
+    const chips = [];
+    chips.push(`
+      <button type="button" class="preset-chip ${sel === 0 ? 'active' : ''}"
+              onclick="SessionManager.selectPreset(0)">
+        <span class="preset-chip-label">Open</span>
+        <span class="preset-chip-sub">end manually</span>
+      </button>`);
+
+    for (const m of presets) {
+      const isActive = sel === m * 60;
+      chips.push(`
+        <button type="button" class="preset-chip ${isActive ? 'active' : ''}"
+                onclick="SessionManager.selectPreset(${m * 60})">
+          <span class="preset-chip-label">${formatPresetLabel(m)}</span>
+          <span class="preset-chip-sub">focus</span>
+          <span class="preset-chip-x" onclick="event.stopPropagation();SessionManager.removePreset(${m})" title="Remove">×</span>
+        </button>`);
+    }
+
+    if (canAddMore) {
+      chips.push(`
+        <button type="button" class="preset-chip preset-chip-add"
+                onclick="SessionManager.promptAddPreset()" title="Add a custom duration">
+          <span class="preset-chip-label">+</span>
+          <span class="preset-chip-sub">add</span>
+        </button>`);
+    }
+
+    const html = `
+      <div class="preset-card">
+        <div class="preset-title">FOCUS DURATION</div>
+        <div class="preset-row">${chips.join('')}</div>
+        <div class="preset-hint" id="presetHint">${
+          sel === 0
+            ? 'No timer — the session runs until you press End.'
+            : 'Session will auto-end after ' + formatPresetLabel(sel / 60) + '.'
+        }</div>
+      </div>`;
+
+    ['presetContainer', 'm-presetContainer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    });
+  }
+
+  function selectPreset(seconds) {
+    selectedDurationSec = seconds;
+    renderPresets();
+  }
+
+  function promptAddPreset() {
+    const raw = prompt('Add a focus duration (in minutes, 1–240):');
+    if (raw === null) return;
+    const n = parseInt(raw.trim(), 10);
+    if (!Number.isFinite(n) || n < 1 || n > 240) {
+      alert('Please enter a whole number of minutes between 1 and 240.');
+      return;
+    }
+    if (!addPreset(n)) {
+      alert('Could not add — you might already have that duration, or you\'ve hit the 10-preset limit.');
+      return;
+    }
+    renderPresets();
+  }
+
+  function deletePreset(minutes) {
+    if (!confirm('Remove the ' + formatPresetLabel(minutes) + ' preset?')) return;
+    // If the user is removing the currently selected preset, fall back to Open.
+    if (selectedDurationSec === minutes * 60) selectedDurationSec = 0;
+    removePreset(minutes);
+    renderPresets();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Score breakdown — explain *why* the session got the score it did.
+  //
+  // Walks every 10s sample, recomputes how many points each signal
+  // (eye / blink / head) deducted, and accumulates totals. Then turns
+  // those totals into a short attention-style narrative + concrete tips.
+  // ─────────────────────────────────────────────────────────────────────────
+  function analyzeSession(session) {
+    const samples = session.timeline || [];
+    if (samples.length === 0) {
+      return {
+        breakdown: [],
+        narrative: 'Session was too short to analyze.',
+        tips:      [],
+        formula:   '',
+      };
+    }
+
+    // Profile state at the time the session was scored. We re-derive this
+    // for the explanation so the report's deductions match the score the
+    // user actually saw.
+    const profile  = loadProfile();
+    const baseline = computeBaseline(profile);
+    const personalized = profile.personalized && profile.sessionCount >= MIN_CALIB_SESSIONS && baseline.eyeMoves.med != null;
+
+    let totalEyePenalty   = 0;
+    let totalBlinkPenalty = 0;
+    let totalHeadPenalty  = 0;
+    let blinkSamples = 0, headSamples = 0;
+    let avgBlink = 0, avgHead = 0, avgEye = 0;
+
+    for (const pt of samples) {
+      avgEye += pt.eyeMoves || 0;
+      // Eye penalty
+      if (personalized) {
+        const z = (baseline.eyeMoves.mad > 0) ? (pt.eyeMoves - baseline.eyeMoves.med) / baseline.eyeMoves.mad : 0;
+        if      (z > 2)   totalEyePenalty += 40;
+        else if (z > 1)   totalEyePenalty += 20;
+        else if (z > 0.5) totalEyePenalty += 8;
+      } else {
+        const T = session.settings.threshold || 6;
+        if      (pt.eyeMoves > T * 1.5) totalEyePenalty += 40;
+        else if (pt.eyeMoves > T)       totalEyePenalty += 20;
+        else if (pt.eyeMoves > T * 0.5) totalEyePenalty += 8;
+      }
+      // Blink penalty
+      if (session.settings.blink && pt.blinkRate != null) {
+        avgBlink += pt.blinkRate; blinkSamples++;
+        if (personalized && baseline.blinkRate.med != null) {
+          const zB = (baseline.blinkRate.mad > 0) ? Math.abs((pt.blinkRate - baseline.blinkRate.med) / baseline.blinkRate.mad) : 0;
+          if      (zB > 2) totalBlinkPenalty += 25;
+          else if (zB > 1) totalBlinkPenalty += 15;
+        } else {
+          if      (pt.blinkRate > 35) totalBlinkPenalty += 25;
+          else if (pt.blinkRate > 25) totalBlinkPenalty += 15;
+          else if (pt.blinkRate < 6)  totalBlinkPenalty += 10;
+        }
+      }
+      // Head penalty
+      if (session.settings.head && pt.headScore != null) {
+        avgHead += pt.headScore; headSamples++;
+        if (personalized && baseline.headScore.med != null) {
+          const zH = (baseline.headScore.mad > 0) ? (pt.headScore - baseline.headScore.med) / baseline.headScore.mad : 0;
+          if      (zH > 2) totalHeadPenalty += 30;
+          else if (zH > 1) totalHeadPenalty += 15;
+        } else {
+          if      (pt.headScore > 3.0) totalHeadPenalty += 30;
+          else if (pt.headScore > 1.5) totalHeadPenalty += 15;
+        }
+      }
+    }
+
+    avgEye   = avgEye   / samples.length;
+    avgBlink = blinkSamples ? avgBlink / blinkSamples : null;
+    avgHead  = headSamples  ? avgHead  / headSamples  : null;
+
+    // Per-sample average penalty (so totals are comparable regardless of length)
+    const eyePerSample   = totalEyePenalty   / samples.length;
+    const blinkPerSample = totalBlinkPenalty / samples.length;
+    const headPerSample  = totalHeadPenalty  / samples.length;
+
+    const breakdown = [
+      { label: 'Eye movement', perSample: eyePerSample,   total: totalEyePenalty,   color: '#7c3aed', avg: avgEye.toFixed(1)  + ' shifts/10s' },
+    ];
+    if (session.settings.blink) breakdown.push({ label: 'Blink rate', perSample: blinkPerSample, total: totalBlinkPenalty, color: '#00e5c3', avg: avgBlink != null ? Math.round(avgBlink) + ' /min' : '—' });
+    if (session.settings.head)  breakdown.push({ label: 'Head movement', perSample: headPerSample,  total: totalHeadPenalty,  color: '#fb923c', avg: avgHead  != null ? avgHead.toFixed(2) : '—' });
+    breakdown.sort((a, b) => b.perSample - a.perSample);
+
+    const avg = session.summary.avgFocus;
+
+    // ── Narrative — what does the score say about your attention? ──
+    let narrative;
+    if (avg >= 85) {
+      narrative = 'Your attention held remarkably steady. Eye movement, blink rate, and head position all stayed near baseline — this is the kind of profile associated with absorbed, flow-state work.';
+    } else if (avg >= 70) {
+      narrative = 'Solid focused work. Most of the session was spent on-task, with only brief windows where your attention drifted. The dips in the chart show when you broke from concentration.';
+    } else if (avg >= 50) {
+      narrative = 'Mixed focus — you had real periods of concentration interspersed with distraction. The score reflects an attention pattern that was repeatedly interrupted rather than sustained.';
+    } else if (avg >= 30) {
+      narrative = 'Attention was scattered for most of the session. Frequent gaze shifts and movement suggest you were dividing focus between the task and other things in your environment.';
+    } else {
+      narrative = 'Your attention rarely settled. This kind of profile usually means the conditions weren\'t right for focus — too many interruptions, fatigue, or a task that wasn\'t engaging enough to anchor on.';
+    }
+
+    // ── Tips — driven by which signal hurt most ──
+    const tips = [];
+    const top = breakdown[0];
+    if (top && top.perSample >= 15) {
+      if (top.label === 'Eye movement') {
+        tips.push('Your eyes wandered a lot. Try moving phones, second monitors, or visual clutter out of your direct line of sight.');
+        tips.push('If you were reading or watching something, use a single window in full screen to give your eyes fewer places to drift.');
+      } else if (top.label === 'Blink rate') {
+        if (avgBlink != null && avgBlink > 25) {
+          tips.push('Your blink rate was elevated — usually a sign of eye strain or fatigue. Take a 20-second break every 20 minutes and look at something ~20 feet away (the 20-20-20 rule).');
+          tips.push('Check your screen brightness and ambient lighting — high contrast between them increases blink rate.');
+        } else if (avgBlink != null && avgBlink < 8) {
+          tips.push('You blinked very little — common when staring intensely at a screen. Consciously blink a few times per minute to keep your eyes lubricated.');
+        }
+      } else if (top.label === 'Head movement') {
+        tips.push('You shifted position often. A more supportive chair or adjusting your monitor height to eye level reduces the urge to reposition.');
+        tips.push('Frequent head turns sometimes signal you\'re reacting to something outside your field of view — noise-canceling headphones or facing away from doorways helps.');
+      }
+    }
+    if (avg < 50 && session.duration < 600) {
+      tips.push('This session was under 10 minutes. Short sessions get penalized harder by brief distractions — try a longer block (20–25 min) so good stretches can outweigh interruptions.');
+    }
+    if (avg >= 70 && tips.length === 0) {
+      tips.push('You\'re doing well — try extending your session length to build endurance, or remove one focus aid (e.g., move to a slightly noisier room) to challenge yourself.');
+    }
+    if (tips.length === 0) {
+      tips.push('Keep your environment consistent across sessions — that\'s what lets the personalized scoring distinguish a real focus dip from a normal day.');
+    }
+
+    // ── Formula description ──
+    const formula = personalized
+      ? 'Personalized scoring: each 10s sample starts at 100 and loses points when your eye movement, blink rate, or head movement deviates more than ~1 MAD (median absolute deviation) from your personal baseline. Final score is the average across all samples.'
+      : 'Classic scoring: each 10s sample starts at 100 and loses points when eye shifts exceed your threshold, when blink rate falls outside 6–25/min, or when head movement exceeds 1.5. Final score is the average across all samples. After 3 completed sessions, scoring switches to your personal baseline.';
+
+    return { breakdown, narrative, tips, formula, personalized };
+  }
+
+  function renderBreakdownHTML(analysis) {
+    if (!analysis.breakdown.length) return '';
+    const maxPer = Math.max(1, ...analysis.breakdown.map(b => b.perSample));
+    const bars = analysis.breakdown.map(b => {
+      const pct = Math.min(100, Math.round((b.perSample / Math.max(maxPer, 20)) * 100));
+      return `
+        <div class="breakdown-row">
+          <div class="breakdown-row-top">
+            <span class="breakdown-label">${b.label}</span>
+            <span class="breakdown-meta">avg ${b.avg} · −${Math.round(b.total)} pts total</span>
+          </div>
+          <div class="breakdown-bar">
+            <div class="breakdown-bar-fill" style="width:${pct}%;background:${b.color}"></div>
+          </div>
+        </div>`;
+    }).join('');
+    return `
+      <div class="analysis-card">
+        <div class="analysis-title">SCORE BREAKDOWN <span class="analysis-mode">${analysis.personalized ? 'PERSONALIZED' : 'CLASSIC'}</span></div>
+        <p class="analysis-formula">${analysis.formula}</p>
+        ${bars}
+      </div>`;
+  }
+
+  function renderNarrativeHTML(analysis) {
+    const tipsHTML = analysis.tips.map(t => `<li>${t}</li>`).join('');
+    return `
+      <div class="analysis-card">
+        <div class="analysis-title">WHAT THIS SAYS</div>
+        <p class="analysis-narrative">${analysis.narrative}</p>
+        <div class="analysis-title" style="margin-top:14px">HOW TO IMPROVE</div>
+        <ul class="analysis-tips">${tipsHTML}</ul>
+      </div>`;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Progress analysis — look at the most recent (up to 10) sessions and
+  // tell the user whether their focus is trending up, down, or flat.
+  // Uses simple linear regression slope on the avgFocus values.
+  // ─────────────────────────────────────────────────────────────────────────
+  function analyzeProgress() {
+    const all = loadSessions(); // newest first
+    if (all.length < 2) return null;
+
+    // Take up to 10 most recent, then put them in chronological order
+    const recent = all.slice(0, 10).reverse();
+    const scores = recent.map(s => s.summary.avgFocus);
+    const n = scores.length;
+
+    // Linear regression: y = mx + b, fit on (index, score)
+    const sumX  = (n - 1) * n / 2;
+    const sumY  = scores.reduce((a, b) => a + b, 0);
+    const sumXY = scores.reduce((acc, y, x) => acc + x * y, 0);
+    const sumXX = (n - 1) * n * (2 * n - 1) / 6;
+    const slope = n > 1 ? (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX) : 0;
+    const meanScore = sumY / n;
+
+    // Compare the first half vs second half for a more intuitive number
+    const half  = Math.floor(n / 2);
+    const early = scores.slice(0, half);
+    const late  = scores.slice(n - half);
+    const earlyAvg = early.length ? early.reduce((a,b)=>a+b,0) / early.length : meanScore;
+    const lateAvg  = late.length  ? late.reduce((a,b)=>a+b,0)  / late.length  : meanScore;
+    const delta    = Math.round(lateAvg - earlyAvg);
+
+    let direction, headline, color, advice;
+    if (slope > 1.5) {
+      direction = 'up';
+      headline  = `Trending up — ${delta >= 0 ? '+' + delta : delta} points over your last ${n} sessions`;
+      color     = 'var(--green)';
+      advice    = 'Whatever you\'ve been doing is working. Keep your environment and routine consistent so the gains compound.';
+    } else if (slope < -1.5) {
+      direction = 'down';
+      headline  = `Trending down — ${delta} points over your last ${n} sessions`;
+      color     = 'var(--red)';
+      advice    = 'Your focus has been dropping. Look at what changed recently — sleep, schedule, workspace — and consider shorter sessions to rebuild the habit.';
+    } else {
+      direction = 'flat';
+      headline  = `Holding steady — averaging ${Math.round(meanScore)}% across your last ${n} sessions`;
+      color     = 'var(--teal)';
+      advice    = meanScore >= 70
+        ? 'Consistent focus is more valuable than peak focus. You have a stable baseline — try extending session length to build endurance.'
+        : 'You\'re plateauing. To break out, change one variable: time of day, environment, or task type, and see if any one shift moves the needle.';
+    }
+
+    return {
+      n,
+      sessions: recent,
+      scores,
+      meanScore: Math.round(meanScore),
+      bestScore: Math.max(...scores),
+      worstScore: Math.min(...scores),
+      slope,
+      delta,
+      direction,
+      headline,
+      color,
+      advice,
+    };
+  }
+
+  function renderProgressHTML(p) {
+    if (!p) {
+      return `
+        <div class="analysis-card">
+          <div class="analysis-title">PROGRESS</div>
+          <p class="analysis-narrative">Complete at least 2 sessions to see your trend over time.</p>
+        </div>`;
+    }
+    // Tiny inline sparkline: scores plotted as SVG path
+    const W = 240, H = 50, pad = 4;
+    const xStep = p.scores.length > 1 ? (W - pad * 2) / (p.scores.length - 1) : 0;
+    const yFor  = s => H - pad - (s / 100) * (H - pad * 2);
+    const pts   = p.scores.map((s, i) => `${pad + i * xStep},${yFor(s)}`).join(' ');
+    const dots  = p.scores.map((s, i) => {
+      const c = s >= 70 ? '#4ade80' : s >= 40 ? '#fbbf24' : '#ef4444';
+      return `<circle cx="${pad + i * xStep}" cy="${yFor(s)}" r="2.5" fill="${c}" />`;
+    }).join('');
+
+    return `
+      <div class="analysis-card">
+        <div class="analysis-title">PROGRESS <span class="analysis-mode">LAST ${p.n}</span></div>
+        <div class="progress-headline" style="color:${p.color}">${p.headline}</div>
+        <svg class="progress-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+          <polyline points="${pts}" fill="none" stroke="${p.color}" stroke-width="1.5" stroke-linejoin="round" />
+          ${dots}
+        </svg>
+        <div class="progress-stats">
+          <div><span class="ps-label">AVG</span><span class="ps-val">${p.meanScore}%</span></div>
+          <div><span class="ps-label">BEST</span><span class="ps-val" style="color:var(--green)">${p.bestScore}%</span></div>
+          <div><span class="ps-label">WORST</span><span class="ps-val" style="color:var(--red)">${p.worstScore}%</span></div>
+        </div>
+        <p class="analysis-narrative" style="margin-top:10px">${p.advice}</p>
+      </div>`;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Report screen
   // ─────────────────────────────────────────────────────────────────────────
   function showReport(session) {
     showScreen('screenReport');
 
-    // Avg score
-    const avgEl = document.getElementById('reportAvgScore');
-    if (avgEl) {
-      avgEl.textContent = session.summary.avgFocus + '%';
-      avgEl.style.color = session.summary.avgFocus >= 70 ? 'var(--green)'
-        : session.summary.avgFocus >= 40 ? 'var(--yellow)' : 'var(--red)';
-    }
-
-    // Meta
-    const metaEl = document.getElementById('reportMeta');
-    if (metaEl) metaEl.innerHTML = `
+    const scoreColor = session.summary.avgFocus >= 70 ? 'var(--green)'
+      : session.summary.avgFocus >= 40 ? 'var(--yellow)' : 'var(--red)';
+    const metaHTML = `
       Duration: <span>${formatDuration(session.duration)}</span><br>
       Date: <span>${formatDate(session.date)}</span><br>
-      Samples: <span>${session.timeline.length}</span>
-    `;
+      Samples: <span>${session.timeline.length}</span>`;
 
-    // Chart (small delay to let DOM paint)
+    const cards = [
+      { val: session.summary.minFocus + '%', label: 'MIN FOCUS' },
+      { val: session.summary.distractionEvents, label: 'DISTRACTIONS' },
+      { val: session.summary.eyeMoveTotal,      label: 'EYE MOVEMENTS' },
+    ];
+    if (session.settings.blink) cards.push({ val: session.summary.totalBlinks, label: 'TOTAL BLINKS' });
+    if (session.settings.head)  cards.push({ val: session.summary.headEvents,  label: 'HEAD EVENTS' });
+    const statsHTML = cards.map(c => `
+      <div class="report-stat-card">
+        <span class="rs-val">${c.val}</span>
+        <span class="rs-label">${c.label}</span>
+      </div>`).join('');
+
+    // Desktop
+    setEl('reportAvgScore', session.summary.avgFocus + '%', scoreColor);
+    const metaEl = document.getElementById('reportMeta');
+    if (metaEl) metaEl.innerHTML = metaHTML;
+    const statsEl = document.getElementById('reportStatsRow');
+    if (statsEl) statsEl.innerHTML = statsHTML;
+
+    // Mobile
+    setEl('m-reportAvgScore', session.summary.avgFocus + '%', scoreColor);
+    const mMetaEl  = document.getElementById('m-reportMeta');
+    if (mMetaEl)  mMetaEl.innerHTML  = metaHTML;
+    const mStatsEl = document.getElementById('m-reportStatsRow');
+    if (mStatsEl) mStatsEl.innerHTML = statsHTML;
+
+    // Score-breakdown / advice / progress blocks (all four containers,
+    // desktop + mobile, get the same content)
+    const analysis = analyzeSession(session);
+    const progress = analyzeProgress();
+    const breakdownHTML = renderBreakdownHTML(analysis);
+    const narrativeHTML = renderNarrativeHTML(analysis);
+    const progressHTML  = renderProgressHTML(progress);
+    ['reportBreakdown', 'm-reportBreakdown'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = breakdownHTML;
+    });
+    ['reportNarrative', 'm-reportNarrative'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = narrativeHTML;
+    });
+    ['reportProgress', 'm-reportProgress'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = progressHTML;
+    });
+
+    // Render charts + heatmap after DOM paint
     setTimeout(() => {
-      const chartEl = document.getElementById('focusChart');
-      if (chartEl) renderChart(chartEl, session.timeline, session.duration);
+      const d = document.getElementById('focusChart');
+      const m = document.getElementById('m-focusChart');
+      if (d) renderChart(d, session.timeline, session.duration);
+      if (m) renderChart(m, session.timeline, session.duration);
+
+      const gW = session.heatmapW || HEATMAP_W;
+      const gH = session.heatmapH || HEATMAP_H;
+      const heat = session.heatmap || [];
+      const dh = document.getElementById('reportHeatmap');
+      const mh = document.getElementById('m-reportHeatmap');
+      if (dh) renderHeatmap(dh, heat, gW, gH);
+      if (mh) renderHeatmap(mh, heat, gW, gH);
     }, 80);
 
-    // Stats row
-    const statsEl = document.getElementById('reportStatsRow');
-    if (statsEl) {
-      const cards = [
-        { val: session.summary.minFocus + '%', label: 'MIN FOCUS' },
-        { val: session.summary.distractionEvents, label: 'DISTRACTIONS' },
-        { val: session.summary.eyeMoveTotal, label: 'EYE MOVEMENTS' },
-      ];
-      if (session.settings.blink) {
-        cards.push({ val: session.summary.totalBlinks, label: 'TOTAL BLINKS' });
-      }
-      if (session.settings.head) {
-        cards.push({ val: session.summary.headEvents, label: 'HEAD EVENTS' });
-      }
-      statsEl.innerHTML = cards.map(c => `
-        <div class="report-stat-card">
-          <span class="rs-val">${c.val}</span>
-          <span class="rs-label">${c.label}</span>
-        </div>`).join('');
-    }
-
-    // Update the timer display to final duration
-    const timerEl = document.getElementById('timerDisplay');
-    if (timerEl) timerEl.textContent = formatDuration(session.duration);
+    // Timer displays
+    setEl('timerDisplay',   formatDuration(session.duration));
+    setEl('m-timerDisplay', formatDuration(session.duration));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Session start
   // ─────────────────────────────────────────────────────────────────────────
   function start() {
-    // Read current settings from UI
-    const blinkToggle = document.getElementById('toggleBlink');
-    const headToggle  = document.getElementById('toggleHead');
-    const thresh      = document.getElementById('threshSlider');
+    // Read settings — prefer the active layout's controls
+    const mobile = isMobile();
+    const blinkToggle = document.getElementById(mobile ? 'm-toggleBlink' : 'toggleBlink');
+    const headToggle  = document.getElementById(mobile ? 'm-toggleHead'  : 'toggleHead');
+    const thresh      = document.getElementById(mobile ? 'm-threshSlider': 'threshSlider');
     sessionSettings = {
       blink:     blinkToggle ? blinkToggle.checked : true,
       head:      headToggle  ? headToggle.checked  : true,
@@ -377,6 +1024,18 @@ const SessionManager = (() => {
     Tracker.setOptions({ blink: sessionSettings.blink, head: sessionSettings.head });
     Tracker.resetSession();
 
+    // Initialize the live gaze map overlay (shown in place of the camera
+    // during active sessions). The webcam keeps streaming into MediaPipe
+    // for tracking, but the user sees the abstract gaze-map view instead.
+    const gazeCanvasId = isMobile() ? 'm-gazeMapCanvas' : 'gazeMapCanvas';
+    const gazeCanvas = document.getElementById(gazeCanvasId);
+    if (gazeCanvas && typeof GazeMap !== 'undefined') {
+      GazeMap.init(gazeCanvas);
+      GazeMap.clear();
+      // Resize after the next paint, once the canvas is laid out
+      setTimeout(() => GazeMap.resize(), 50);
+    }
+
     // Wire tracker events
     let eyeMoveCount = 0;
     Tracker.onGazeChange = (dir) => {
@@ -384,6 +1043,24 @@ const SessionManager = (() => {
       sampleEyeMoves++;
     };
     Tracker.onBlink = () => { sampleBlinks++; };
+
+    // Each frame: (a) push a point into the live gaze map for the active
+    // screen, and (b) bin it into the session's full-session heatmap grid
+    // for the report / history screens.
+    Tracker.onFrame = (frame) => {
+      if (!frame || !frame.gazePoint) return;
+      if (typeof GazeMap !== 'undefined') GazeMap.addPoint(frame.gazePoint);
+      if (!activeSession || !activeSession.heatmap) return;
+      const gx = Math.floor(frame.gazePoint.nx * HEATMAP_W);
+      const gy = Math.floor(frame.gazePoint.ny * HEATMAP_H);
+      if (gx >= 0 && gx < HEATMAP_W && gy >= 0 && gy < HEATMAP_H) {
+        activeSession.heatmap[gy * HEATMAP_W + gx]++;
+      }
+    };
+
+    // Switch the body into "session active" mode so CSS can hide the
+    // webcam preview and reveal the gaze-map stage in its place.
+    document.body.classList.add('session-active');
 
     // Hide live cards based on settings
     const blinkCard = document.getElementById('liveBlinkCard');
@@ -398,6 +1075,9 @@ const SessionManager = (() => {
       duration: 0,
       settings: { ...sessionSettings },
       timeline: [],
+      heatmap:  new Array(HEATMAP_W * HEATMAP_H).fill(0),
+      heatmapW: HEATMAP_W,
+      heatmapH: HEATMAP_H,
       summary:  {
         avgFocus:         0,
         minFocus:         100,
@@ -414,35 +1094,59 @@ const SessionManager = (() => {
     // Switch to active screen
     showScreen('screenActive');
 
-    // Session timer
-    const timerEl  = document.getElementById('timerDisplay');
-    const camTimer = document.getElementById('camTimer');
-    const sessionTimerEl = document.getElementById('sessionTimer');
-    if (sessionTimerEl) sessionTimerEl.classList.add('visible');
-    if (camTimer) camTimer.classList.add('visible');
+    // Show timers in both layouts
+    ['sessionTimer','m-sessionTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('visible');
+    });
+    ['camTimer','m-camTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('visible');
+    });
+
+    // Show/hide optional cards in both layouts
+    ['liveBlinkCard','m-liveBlinkCard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = sessionSettings.blink ? '' : 'none';
+    });
+    ['liveHeadCard','m-liveHeadCard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = sessionSettings.head ? '' : 'none';
+    });
+
+    // Snapshot the duration choice at the moment the session starts so
+    // changes on the idle screen during a session can't affect a running one.
+    activeSession.targetDurationSec = selectedDurationSec; // 0 = open-ended
 
     let elapsedSeconds = 0;
     timerInterval = setInterval(() => {
       elapsedSeconds++;
       activeSession.duration = elapsedSeconds;
-      const str = formatDuration(elapsedSeconds);
-      if (timerEl)  timerEl.textContent  = str;
-      if (camTimer) camTimer.textContent = str;
+      const target = activeSession.targetDurationSec;
+
+      // Open-ended: count up. Preset: count down toward 0 then auto-end.
+      const display = target > 0
+        ? formatDuration(Math.max(0, target - elapsedSeconds))
+        : formatDuration(elapsedSeconds);
+      setEl('timerDisplay',   display);
+      setEl('m-timerDisplay', display);
+      setEl('camTimer',   display);
+      setEl('m-camTimer', display);
+
+      if (target > 0 && elapsedSeconds >= target) {
+        // Time's up — auto-finalize the session.
+        end();
+      }
     }, 1000);
 
-    // ── Fast display refresh (every 1s) ──
-    // Updates the live stats panel continuously so the user sees
-    // real-time values, not values frozen for 10 seconds at a time.
-    // Uses the current accumulated eye moves since the last 10s sample,
-    // plus live blink rate and head score from the tracker.
+    // ── Fast display refresh (every 0.5s) ──
     displayInterval = setInterval(() => {
       if (!activeSession) return;
       const blinkRate = Tracker.getBlinkRate();
       const headScore = Tracker.getHeadScore();
-      // Calculate a live score from moves accumulated since last sample
       const liveScore = calcFocusScore(sampleEyeMoves, blinkRate, headScore);
       updateLiveUI(liveScore, Tracker.currentDir, blinkRate, headScore);
-    }, 1000);
+    }, 500);
 
     // Focus sampling — every 10s record a data point to the timeline
     sampleInterval = setInterval(() => {
@@ -488,11 +1192,22 @@ const SessionManager = (() => {
     displayInterval = null;
     timerInterval   = null;
 
-    // Hide session timer overlay
-    const sessionTimerEl = document.getElementById('sessionTimer');
-    const camTimer = document.getElementById('camTimer');
-    if (sessionTimerEl) sessionTimerEl.classList.remove('visible');
-    if (camTimer) { camTimer.classList.remove('visible'); camTimer.textContent = ''; }
+    // Clear the live gaze map and put the camera preview back
+    if (typeof GazeMap !== 'undefined') GazeMap.clear();
+    document.body.classList.remove('session-active');
+
+    // Hide timers in both layouts
+    ['sessionTimer','m-sessionTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('visible');
+    });
+    ['camTimer','m-camTimer'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.classList.remove('visible'); el.textContent = ''; }
+    });
+    // Hide mobile focus badge
+    const badge = document.getElementById('m-focusBadge');
+    if (badge) badge.classList.remove('visible');
 
     // Capture final partial sample if there's been any data
     if (sampleEyeMoves > 0 || activeSession.timeline.length === 0) {
@@ -544,6 +1259,7 @@ const SessionManager = (() => {
     showScreen('screenIdle');
     const timerEl = document.getElementById('timerDisplay');
     if (timerEl) timerEl.textContent = '00:00';
+    renderPresets();
   }
 
   function clearHistory() {
@@ -588,14 +1304,30 @@ const SessionManager = (() => {
           <div class="chart-y-labels"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div>
           <canvas id="modalChart" style="flex:1;height:160px;border-radius:8px;border:1px solid var(--border);display:block;"></canvas>
         </div>
+        <div class="heatmap-wrap">
+          <div class="heatmap-title">GAZE HEATMAP</div>
+          <canvas id="modalHeatmap" class="heatmap-canvas"></canvas>
+          <div class="heatmap-legend">
+            <span class="heatmap-legend-label">rarely viewed</span>
+            <span class="heatmap-legend-bar"></span>
+            <span class="heatmap-legend-label">frequently viewed</span>
+          </div>
+        </div>
       </div>`;
 
     document.body.appendChild(modal);
 
-    // Render chart inside modal
+    // Render chart + heatmap inside modal
     setTimeout(() => {
       const c = document.getElementById('modalChart');
       if (c) renderChart(c, session.timeline, session.duration);
+
+      const h = document.getElementById('modalHeatmap');
+      if (h) {
+        const gW = session.heatmapW || HEATMAP_W;
+        const gH = session.heatmapH || HEATMAP_H;
+        renderHeatmap(h, session.heatmap || [], gW, gH);
+      }
     }, 60);
 
     // Close on backdrop click
@@ -606,12 +1338,14 @@ const SessionManager = (() => {
   // Init — wire up MediaPipe, load history
   // ─────────────────────────────────────────────────────────────────────────
   function init() {
-    const videoEl  = document.getElementById('video');
-    const canvasEl = document.getElementById('overlay');
+    const mobile   = isMobile();
+    const videoEl  = document.getElementById(mobile ? 'm-video'   : 'video');
+    const canvasEl = document.getElementById(mobile ? 'm-overlay' : 'overlay');
     if (!videoEl || !canvasEl) return;
 
     Tracker.start(videoEl, canvasEl);
     renderHistory();
+    renderPresets();
     showScreen('screenIdle');
   }
 
@@ -624,6 +1358,10 @@ const SessionManager = (() => {
   }
 
   // ── Public API ──
-  return { start, end, newSession, clearHistory, viewSession };
+  return {
+    start, end, newSession, clearHistory, viewSession,
+    selectPreset, promptAddPreset,
+    removePreset: deletePreset,
+  };
 
 })();
