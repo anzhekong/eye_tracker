@@ -667,3 +667,145 @@ canvas#focusChart {
   .report-top { flex-direction: column; }
   .report-meta { text-align: left; }
 }
+
+.sensor-layer {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  top: -10px;
+  left: -10px;
+}
+
+.launch-wrap {
+  min-height: calc(100vh - 120px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.launch-frame {
+  width: min(980px, 92vw);
+  min-height: 70vh;
+  background: rgba(255,255,255,0.02);
+  border: 4px solid #7c3aed;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 32px;
+}
+
+.launch-timer {
+  font-family: var(--mono);
+  font-size: clamp(3rem, 9vw, 7rem);
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: -0.04em;
+}
+
+.launch-sub {
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.launch-settings {
+  width: min(680px, 100%);
+  background: rgba(14,20,32,0.75);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.center-start {
+  max-width: 260px;
+}
+
+.focus-stage {
+  position: relative;
+  min-height: calc(100vh - 120px);
+  margin: 24px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #e5e7eb;
+}
+
+.focus-stage-frame {
+  position: absolute;
+  inset: 20px;
+  border: 4px solid #7c3aed;
+  pointer-events: none;
+}
+
+.gaze-map-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.72;
+}
+
+.timer-center-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  z-index: 2;
+}
+
+.timer-readout {
+  font-family: var(--mono);
+  font-size: clamp(4rem, 10vw, 7rem);
+  font-weight: 700;
+  color: #0b0b0b;
+  letter-spacing: -0.06em;
+  text-shadow: 0 2px 10px rgba(255,255,255,0.28);
+}
+
+.floating-end {
+  width: auto;
+  min-width: 180px;
+  background: rgba(255,255,255,0.78);
+  color: #7f1d1d;
+  border: 1px solid rgba(127,29,29,0.22);
+}
+
+body.focus-mode .layout {
+  grid-template-columns: 1fr;
+}
+
+body.focus-mode .history-sidebar {
+  display: none;
+}
+
+body.focus-mode .debug-strip {
+  display: none;
+}
+
+body.focus-mode .main-col {
+  border-right: none;
+}
+
+@media (max-width: 860px) {
+  .focus-stage {
+    margin: 12px;
+    min-height: calc(100vh - 96px);
+  }
+
+  .focus-stage-frame {
+    inset: 12px;
+  }
+
+  .launch-frame {
+    min-height: 76vh;
+    padding: 20px;
+  }
+}
