@@ -610,6 +610,13 @@ const SessionManager = (() => {
     const canvasEl = document.getElementById('overlay');
     if (!videoEl || !canvasEl) return;
 
+    // Unlock audio on first user interaction
+    document.addEventListener('click', () => {
+      if (window.audioCtx && window.audioCtx.state === 'suspended') {
+        window.audioCtx.resume();
+      }
+    }, { once: true });
+
     Tracker.start(videoEl, canvasEl);
     renderHistory();
     showScreen('screenIdle');
