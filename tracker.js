@@ -20,6 +20,64 @@ const Tracker = (() => {
   let onBlink      = null;
   let onFrame      = null;
 
+  // ── Focus + Audio State ──
+  let lowFocusStart = null;
+  let audioActive   = false;
+
+  // ── Audio Engine ──
+  let audioCtx = null;
+  let masterGain = null;
+  let oscL = null;
+  let oscR = null;
+
+  function initAudio() {
+    if (audioCtx) return;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    window.audioCtx = audioCtx; 
+
+    oscL = audioCtx.createOscillator();
+    oscR = audioCtx.createOscillator();
+    const gainL = audioCtx.createGain();
+    const gainR = audioCtx.createGain();
+    masterGain  = audioCtx.createGain();
+
+    oscL.frequency.value = 300;
+    oscR.frequency.value = 340;
+
+    oscL.type = 'sine';
+    oscR.type = 'sine';
+
+    const merger = audioCtx.createChannelMerger(2);
+
+    oscL.connect(gainL);
+    oscR.connect(gainR);
+
+    gainL.connect(merger, 0, 0);
+    gainR.connect(merger, 0, 1);
+
+    merger.connect(masterGain);
+    masterGain.connect(audioCtx.destination);
+
+    masterGain.gain.value = 0;
+
+    oscL.start();
+    oscR.start();
+  }
+
+  function fadeInAudio(duration = 3000) {
+    initAudio();
+    const now = audioCtx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.linearRampToValueAtTime(0.2, now + duration / 1000);
+  }
+
+  function fadeOutAudio(duration = 3000) {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.linearRampToValueAtTime(0, now + duration / 1000);
+  }
   // ── Options ──
   let opts = { blink: true, head: true };
 
@@ -225,6 +283,44 @@ const Tracker = (() => {
     return { center, radius };
   }
 
+  function computeFocusLevel({ blinkRate, headScore }) {
+  let score = 1.0;
+
+  if (blinkRate !== null) {
+    const blinkPenalty = Math.min(Math.abs(blinkRate - 15) / 20, 1);
+    score -= blinkPenalty * 0.5;
+  }
+
+  if (headScore !== null) {
+    const headPenalty = Math.min(headScore / 0.05, 1);
+    score -= headPenalty * 0.5;
+  }
+
+  return Math.max(0, Math.min(1, score));
+}
+
+function handleFocusAudio(focusLevel) {
+  const now = Date.now();
+
+  // ── Low focus condition ──
+  if (focusLevel < 0.4) {
+    if (!lowFocusStart) lowFocusStart = now;
+
+    if (!audioActive && now - lowFocusStart > 60000) {
+      fadeInAudio();
+      audioActive = true;
+    }
+  } else {
+    lowFocusStart = null;
+  }
+
+  // ── Recovery condition ──
+  if (audioActive && focusLevel >= 0.8) {
+    fadeOutAudio();
+    audioActive = false;
+  }
+}
+
   // ── Session start time (for blink rate normalization) ──
   let _sessionStart = Date.now();
 
@@ -289,15 +385,26 @@ const Tracker = (() => {
     if (opts.head) trackHead(lms);
 
     // Fire onFrame with all current measurements
+    const frameData = {
+      ear: avgEAR,
+      vertRatio: vertRatio,
+      horizRatio: horizRatio,
+      dir: dir,
+      headScore: opts.head ? getHeadScore() : null,
+      blinkRate: opts.blink ? getBlinkRate() : null,
+    };
+
+    // ── Compute focus ──
+    const focusLevel = computeFocusLevel(frameData);
+
+    // ── Handle audio feedback ──
+    handleFocusAudio(focusLevel);
+
+    // ── Optional: expose focus to UI
+    frameData.focusLevel = focusLevel;
+
     if (onFrame) {
-      onFrame({
-        ear:        avgEAR,
-        vertRatio:  vertRatio,
-        horizRatio: horizRatio,
-        dir:        dir,
-        headScore:  opts.head  ? getHeadScore()   : null,
-        blinkRate:  opts.blink ? getBlinkRate()   : null,
-      });
+      onFrame(frameData);
     }
   }
 
