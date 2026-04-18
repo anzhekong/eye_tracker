@@ -88,6 +88,10 @@
           <div id="calibStatusContainer"></div>
           <button class="btn-start" onclick="SessionManager.start()">&#9654; &nbsp;START SESSION</button>
           <button class="btn-calib" onclick="SessionManager.startCalibration()">&#9632; &nbsp;CALIBRATE PERSONAL MODEL</button>
+          <div class="model-io-row">
+            <button class="btn-modelio" onclick="SessionManager.exportModel()">&#8681; &nbsp;EXPORT MODEL</button>
+            <button class="btn-modelio" onclick="SessionManager.importModel()">&#8679; &nbsp;IMPORT MODEL</button>
+          </div>
         </div>
       </div>
 
@@ -243,6 +247,10 @@
         <div id="m-calibStatusContainer"></div>
         <button class="btn-start m-full-btn" onclick="SessionManager.start()">&#9654; &nbsp;START SESSION</button>
         <button class="btn-calib m-full-btn" onclick="SessionManager.startCalibration()">&#9632; &nbsp;CALIBRATE PERSONAL MODEL</button>
+        <div class="model-io-row">
+          <button class="btn-modelio m-full-btn" onclick="SessionManager.exportModel()">&#8681; &nbsp;EXPORT</button>
+          <button class="btn-modelio m-full-btn" onclick="SessionManager.importModel()">&#8679; &nbsp;IMPORT</button>
+        </div>
       </div>
 
       <!-- M-ACTIVE -->

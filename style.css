@@ -716,6 +716,33 @@ body.session-active .gaze-stage-label {
 }
 .m-full-btn.btn-calib { max-width: none; }
 
+.model-io-row {
+  max-width: 380px;
+  margin: 8px auto 0;
+  display: flex;
+  gap: 8px;
+}
+.btn-modelio {
+  flex: 1;
+  padding: 9px 10px;
+  background: transparent;
+  color: rgba(157,110,248,0.75);
+  border: 1px solid rgba(157,110,248,0.25);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-modelio:hover {
+  background: rgba(157,110,248,0.08);
+  border-color: var(--purple);
+  color: #b289ff;
+}
+.m-full-btn.btn-modelio { max-width: none; }
+
 .calib-status {
   max-width: 380px;
   margin: 12px auto 0;
