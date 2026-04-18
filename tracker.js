@@ -20,64 +20,6 @@ const Tracker = (() => {
   let onBlink      = null;
   let onFrame      = null;
 
-  // ── Focus + Audio State ──
-  let lowFocusStart = null;
-  let audioActive   = false;
-
-  // ── Audio Engine ──
-  let audioCtx = null;
-  let masterGain = null;
-  let oscL = null;
-  let oscR = null;
-
-  function initAudio() {
-    if (audioCtx) return;
-
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    window.audioCtx = audioCtx; 
-
-    oscL = audioCtx.createOscillator();
-    oscR = audioCtx.createOscillator();
-    const gainL = audioCtx.createGain();
-    const gainR = audioCtx.createGain();
-    masterGain  = audioCtx.createGain();
-
-    oscL.frequency.value = 300;
-    oscR.frequency.value = 340;
-
-    oscL.type = 'sine';
-    oscR.type = 'sine';
-
-    const merger = audioCtx.createChannelMerger(2);
-
-    oscL.connect(gainL);
-    oscR.connect(gainR);
-
-    gainL.connect(merger, 0, 0);
-    gainR.connect(merger, 0, 1);
-
-    merger.connect(masterGain);
-    masterGain.connect(audioCtx.destination);
-
-    masterGain.gain.value = 0;
-
-    oscL.start();
-    oscR.start();
-  }
-
-  function fadeInAudio(duration = 3000) {
-    initAudio();
-    const now = audioCtx.currentTime;
-    masterGain.gain.cancelScheduledValues(now);
-    masterGain.gain.linearRampToValueAtTime(0.2, now + duration / 1000);
-  }
-
-  function fadeOutAudio(duration = 3000) {
-    if (!audioCtx) return;
-    const now = audioCtx.currentTime;
-    masterGain.gain.cancelScheduledValues(now);
-    masterGain.gain.linearRampToValueAtTime(0, now + duration / 1000);
-  }
   // ── Options ──
   let opts = { blink: true, head: true };
 
@@ -283,44 +225,6 @@ const Tracker = (() => {
     return { center, radius };
   }
 
-  function computeFocusLevel({ blinkRate, headScore }) {
-  let score = 1.0;
-
-  if (blinkRate !== null) {
-    const blinkPenalty = Math.min(Math.abs(blinkRate - 15) / 20, 1);
-    score -= blinkPenalty * 0.5;
-  }
-
-  if (headScore !== null) {
-    const headPenalty = Math.min(headScore / 0.05, 1);
-    score -= headPenalty * 0.5;
-  }
-
-  return Math.max(0, Math.min(1, score));
-}
-
-function handleFocusAudio(focusLevel) {
-  const now = Date.now();
-
-  // ── Low focus condition ──
-  if (focusLevel < 0.4) {
-    if (!lowFocusStart) lowFocusStart = now;
-
-    if (!audioActive && now - lowFocusStart > 60000) {
-      fadeInAudio();
-      audioActive = true;
-    }
-  } else {
-    lowFocusStart = null;
-  }
-
-  // ── Recovery condition ──
-  if (audioActive && focusLevel >= 0.8) {
-    fadeOutAudio();
-    audioActive = false;
-  }
-}
-
   // ── Session start time (for blink rate normalization) ──
   let _sessionStart = Date.now();
 
@@ -342,16 +246,21 @@ function handleFocusAudio(focusLevel) {
     const avgEAR    = computeEAR(lms);
     const vertRatio = getVertGazeRatio(lms);
 
-    // Debug strip
-    const dr = document.getElementById('dbgRatio');
-    const de = document.getElementById('dbgEar');
-    const db = document.getElementById('dbgBlock');
-    if (dr) { dr.textContent = vertRatio.toFixed(3); dr.style.color = vertRatio>0.08?'#fb923c':vertRatio<-0.08?'#f472b6':'#00e5c3'; }
-    if (de) de.textContent = avgEAR.toFixed(3);
+    // Debug strip — update desktop and mobile elements
+    function dbg(id, text, color) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text;
+      if (color) el.style.color = color;
+    }
+    const ratioColor = vertRatio > 0.08 ? '#fb923c' : vertRatio < -0.08 ? '#f472b6' : '#00e5c3';
+    dbg('dbgRatio', vertRatio.toFixed(3), ratioColor);
+    dbg('dbgEar',   avgEAR.toFixed(3));
 
     // Blink classification
     const isBlink = opts.blink ? classifyBlink(avgEAR, vertRatio) : false;
-    if (db) db.textContent = isBlink ? blinkState : 'none';
+    const blinkText = isBlink ? blinkState : 'none';
+    dbg('dbgBlock', blinkText);
 
     if (isBlink) {
       _setStatus('BLINK', true);
@@ -384,35 +293,39 @@ function handleFocusAudio(focusLevel) {
     // Head tracking
     if (opts.head) trackHead(lms);
 
-    // Fire onFrame with all current measurements
-    const frameData = {
-      ear: avgEAR,
-      vertRatio: vertRatio,
-      horizRatio: horizRatio,
-      dir: dir,
-      headScore: opts.head ? getHeadScore() : null,
-      blinkRate: opts.blink ? getBlinkRate() : null,
+    // Approximate gaze point in normalized [0,1] screen coords,
+    // using the average iris landmark. Horizontal is flipped because
+    // MediaPipe delivers a mirrored front-camera image.
+    const iL = lms[468];
+    const iR = lms[473];
+    const gazePoint = {
+      nx: 1 - (iL.x + iR.x) / 2,
+      ny: (iL.y + iR.y) / 2,
     };
 
-    // ── Compute focus ──
-    const focusLevel = computeFocusLevel(frameData);
-
-    // ── Handle audio feedback ──
-    handleFocusAudio(focusLevel);
-
-    // ── Optional: expose focus to UI
-    frameData.focusLevel = focusLevel;
-
+    // Fire onFrame with all current measurements
     if (onFrame) {
-      onFrame(frameData);
+      onFrame({
+        ear:        avgEAR,
+        vertRatio:  vertRatio,
+        horizRatio: horizRatio,
+        dir:        dir,
+        gazePoint:  gazePoint,
+        headScore:  opts.head  ? getHeadScore()   : null,
+        blinkRate:  opts.blink ? getBlinkRate()   : null,
+      });
     }
   }
 
   function _setStatus(text, active) {
-    const pill = document.getElementById('statusPill');
-    const span = document.getElementById('statusText');
-    if (span) span.textContent = text;
-    if (pill) pill.classList.toggle('active', active);
+    ['statusPill','m-statusPill'].forEach(id => {
+      const pill = document.getElementById(id);
+      if (pill) pill.classList.toggle('active', active);
+    });
+    ['statusText','m-statusText'].forEach(id => {
+      const span = document.getElementById(id);
+      if (span) span.textContent = text;
+    });
   }
 
   // ── Public API ──
