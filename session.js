@@ -2295,6 +2295,89 @@ const SessionManager = (() => {
     renderCalibStatus();
   }
 
+  // ── Export / Import: no backend, so users back up their fingerprint locally ──
+  function exportModel() {
+    const p = loadProfile();
+    if (!p.model || !p.model.weights) {
+      alert('No trained model to export yet. Run calibration first.');
+      return;
+    }
+    const payload = {
+      app:        'eyetrace',
+      kind:       'personal-model',
+      version:    1,
+      exportedAt: new Date().toISOString(),
+      model:      p.model,
+      calibrationSamples: p.calibrationSamples || [],
+      profileStats: {
+        sessionCount:     p.sessionCount     || 0,
+        eyeMovesSamples:  p.eyeMovesSamples  || [],
+        blinkRateSamples: p.blinkRateSamples || [],
+        headScoreSamples: p.headScoreSamples || [],
+      }
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href     = url;
+    a.download = `eyetrace-fingerprint-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function importModel() {
+    const input = document.createElement('input');
+    input.type   = 'file';
+    input.accept = 'application/json,.json';
+    input.onchange = (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        let data;
+        try { data = JSON.parse(e.target.result); }
+        catch (err) { alert('Import failed: not a valid JSON file.'); return; }
+
+        if (!data || data.app !== 'eyetrace' || data.kind !== 'personal-model') {
+          alert('Import failed: file does not look like an EyeTrace fingerprint export.');
+          return;
+        }
+        const m = data.model;
+        if (!m || !Array.isArray(m.weights) || !Array.isArray(m.mu) || !Array.isArray(m.sigma)
+            || m.weights.length !== m.mu.length || m.weights.length !== m.sigma.length) {
+          alert('Import failed: model payload is malformed.');
+          return;
+        }
+        if (m.version !== 1) {
+          alert('Import failed: unsupported model version (' + m.version + ').');
+          return;
+        }
+
+        const p = loadProfile();
+        const hadModel = !!(p.model && p.model.weights);
+        if (hadModel && !confirm('You already have a trained model. Replace it with the imported one?')) return;
+
+        p.model = m;
+        p.calibrationSamples = Array.isArray(data.calibrationSamples) ? data.calibrationSamples : [];
+        if (data.profileStats) {
+          if (Array.isArray(data.profileStats.eyeMovesSamples))  p.eyeMovesSamples  = data.profileStats.eyeMovesSamples;
+          if (Array.isArray(data.profileStats.blinkRateSamples)) p.blinkRateSamples = data.profileStats.blinkRateSamples;
+          if (Array.isArray(data.profileStats.headScoreSamples)) p.headScoreSamples = data.profileStats.headScoreSamples;
+        }
+        saveProfile(p);
+        renderCalibStatus();
+        alert('Personal model imported. R² ' +
+          (m.calibration && typeof m.calibration.r2 === 'number' ? m.calibration.r2.toFixed(2) : '—') +
+          ' across ' + (m.calibration ? m.calibration.nWindows : 0) + ' windows.');
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Init — wire up MediaPipe, load history
   // ─────────────────────────────────────────────────────────────────────────
@@ -2326,7 +2409,7 @@ const SessionManager = (() => {
     removePreset: deletePreset,
     // Calibration
     startCalibration, cancelCalibration,
-    calibNext, resetModel,
+    calibNext, resetModel, exportModel, importModel,
     // Post-session feedback
     feedbackOk, feedbackOff,
     // Full-report preview (used for re-viewing a historical session)
