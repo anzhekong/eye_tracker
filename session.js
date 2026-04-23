@@ -2932,7 +2932,7 @@ const SessionManager = (() => {
     const a    = document.createElement('a');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     a.href     = url;
-    a.download = `eyetrace-fingerprint-${stamp}.json`;
+    a.download = `ifocus-fingerprint-${stamp}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2953,7 +2953,7 @@ const SessionManager = (() => {
         catch (err) { alert('Import failed: not a valid JSON file.'); return; }
 
         if (!data || data.app !== 'eyetrace' || data.kind !== 'personal-model') {
-          alert('Import failed: file does not look like an EyeTrace fingerprint export.');
+          alert('Import failed: file does not look like an iFocus fingerprint export.');
           return;
         }
         const m = data.model;
