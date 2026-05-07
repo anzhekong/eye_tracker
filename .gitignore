@@ -1,0 +1,14 @@
+# Local Claude Code workspace state — do not commit
+.claude/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+
+# Python build artifacts (build-icons.py)
+__pycache__/
+*.pyc

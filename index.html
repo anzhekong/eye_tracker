@@ -1,11 +1,69 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>iFocus — Focus Tracker</title>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <meta name="description" content="Webcam-based focus tracker. Measures blink rate, eye movement, and head movement to coach better focus.">
+
+  <!-- Theme + iOS chrome -->
+  <meta name="theme-color" content="#0e1420" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="color-scheme" content="dark light">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+
+  <!-- iOS web-app -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="iFocus">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="icons/apple-touch-icon-120.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/apple-touch-icon-152.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="icons/apple-touch-icon-167.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon-180.png">
+
+  <!-- Favicons -->
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+  <link rel="shortcut icon" href="favicon.ico">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="style.css">
+
+  <!-- Apply saved theme before paint (avoids flash of wrong theme) -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('ifocus-theme') || 'auto';
+        if (!['auto','light','dark'].includes(saved)) saved = 'auto';
+        document.documentElement.setAttribute('data-theme', saved);
+        // Sync the dynamic theme-color meta so iOS chrome matches
+        function syncMeta() {
+          var resolved = saved;
+          if (saved === 'auto') {
+            resolved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          }
+          var color = resolved === 'light' ? '#ffffff' : '#0e1420';
+          var existing = document.querySelector('meta[name="theme-color"]:not([media])');
+          if (!existing) {
+            existing = document.createElement('meta');
+            existing.setAttribute('name', 'theme-color');
+            document.head.appendChild(existing);
+          }
+          existing.setAttribute('content', color);
+        }
+        syncMeta();
+        try { window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', syncMeta); } catch (e) {}
+      } catch (e) { /* localStorage unavailable */ }
+    })();
+  </script>
 </head>
 <body>
 
@@ -29,6 +87,22 @@
         <div class="status-dot"></div>
         <span id="statusText">READY</span>
       </div>
+      <div class="header-actions">
+        <div class="theme-toggle" role="group" aria-label="Color theme">
+          <button type="button" data-theme-set="light"  aria-label="Light theme"  title="Light">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          </button>
+          <button type="button" data-theme-set="auto"   aria-label="System theme" title="System">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </button>
+          <button type="button" data-theme-set="dark"   aria-label="Dark theme"   title="Dark">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+        </div>
+        <button type="button" class="icon-btn" id="helpBtn" aria-label="What do these metrics mean?" title="What the metrics mean">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -46,10 +120,10 @@
       </div>
 
       <div class="debug-strip">
-        <div class="dbg-item"><span class="dbg-label">VERT</span><span id="dbgRatio" class="dbg-val" style="color:var(--teal)">—</span></div>
-        <div class="dbg-item"><span class="dbg-label">EAR</span><span id="dbgEar" class="dbg-val" style="color:var(--amber)">—</span></div>
-        <div class="dbg-item"><span class="dbg-label">BLINK</span><span id="dbgBlock" class="dbg-val" style="color:var(--red)">—</span></div>
-        <div class="dbg-item"><span class="dbg-label">GAZE</span><span id="dbgGaze" class="dbg-val" style="color:var(--purple)">—</span></div>
+        <div class="dbg-item" data-tip="Vertical iris ratio — where in your eye opening the pupil sits"><span class="dbg-label">VERT</span><span id="dbgRatio" class="dbg-val" style="color:var(--teal)">—</span></div>
+        <div class="dbg-item" data-tip="Eye Aspect Ratio — measures eyelid opening; low values = blink"><span class="dbg-label">EAR</span><span id="dbgEar" class="dbg-val" style="color:var(--amber)">—</span></div>
+        <div class="dbg-item" data-tip="Frames since last detected blink"><span class="dbg-label">BLINK</span><span id="dbgBlock" class="dbg-val" style="color:var(--red)">—</span></div>
+        <div class="dbg-item" data-tip="Current gaze direction estimate"><span class="dbg-label">GAZE</span><span id="dbgGaze" class="dbg-val" style="color:var(--purple)">—</span></div>
       </div>
 
       <!-- IDLE -->
@@ -211,6 +285,22 @@
       <div class="status-pill" id="m-statusPill">
         <div class="status-dot"></div>
         <span id="m-statusText">READY</span>
+      </div>
+      <div class="header-actions">
+        <div class="theme-toggle" role="group" aria-label="Color theme">
+          <button type="button" data-theme-set="light" aria-label="Light theme">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          </button>
+          <button type="button" data-theme-set="auto" aria-label="System theme">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </button>
+          <button type="button" data-theme-set="dark" aria-label="Dark theme">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+        </div>
+        <button type="button" class="icon-btn" id="m-helpBtn" aria-label="What do these metrics mean?">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </button>
       </div>
     </div>
   </header>
@@ -385,6 +475,60 @@
 
 </div><!-- /mobile-app -->
 
+<!-- ─── Help modal: plain-English explanation of every metric ─── -->
+<div class="modal-overlay" id="helpModal" style="display:none" role="dialog" aria-labelledby="helpTitle" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="helpTitle">How iFocus measures focus</span>
+      <button class="modal-close" type="button" aria-label="Close" onclick="closeHelp()">×</button>
+    </div>
+    <div class="modal-section">
+      <h4>Focus score (0–100)</h4>
+      <p>A blended estimate of how focused you are right now, combining your blink rate, head stillness, and gaze stability. Higher = more focused.</p>
+    </div>
+    <div class="modal-section">
+      <h4>Blinks per minute <span class="modal-acronym">BPM</span></h4>
+      <p>Healthy reading averages ~15 blinks/min. Much lower can mean strain; much higher can mean fatigue (Andreassi, 2000).</p>
+    </div>
+    <div class="modal-section">
+      <h4>Head movement</h4>
+      <p>How much your head shifts second-to-second. Frequent head movement often correlates with distraction.</p>
+    </div>
+    <div class="modal-section">
+      <h4>Gaze direction</h4>
+      <p>Where you're looking on the screen. The gaze map (during a session) shows your live attention point; the heatmap (in the report) shows where you spent the most time.</p>
+    </div>
+    <div class="modal-section">
+      <h4>Calibrate personal model</h4>
+      <p>A short typing + arithmetic exercise that learns your personal "focused" baseline. Optional, but recommended for accuracy.</p>
+    </div>
+    <div class="modal-section">
+      <h4>Nudge with music</h4>
+      <p>If you stay distracted past your chosen threshold, a gentle tone plays to bring you back. Tap the indicator to silence.</p>
+    </div>
+    <div class="modal-section">
+      <h4>Privacy</h4>
+      <p>Everything runs on your device. No video, gaze data, or session history ever leaves your computer.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ─── iOS "Add to Home Screen" hint (auto-dismissed when installed) ─── -->
+<div class="install-hint" id="installHint" role="dialog" aria-live="polite">
+  <div class="install-hint-icon">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 19V5M5 12l7-7 7 7"/>
+    </svg>
+  </div>
+  <div class="install-hint-text">
+    <div class="install-hint-title" id="installHintTitle">Install iFocus</div>
+    <div class="install-hint-sub" id="installHintSub">Tap the Share button, then <kbd>Add to Home Screen</kbd>.</div>
+  </div>
+  <button class="install-hint-close" type="button" aria-label="Dismiss" onclick="dismissInstallHint()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+</div>
+
 <script>
   function mobileTab(tab) {
     ['session','history'].forEach(t => {
@@ -394,6 +538,77 @@
     });
   }
   function isMobile() { return window.innerWidth <= 768; }
+
+  /* ── Theme toggle ──────────────────────────────────────────── */
+  (function initTheme() {
+    const root = document.documentElement;
+    function setTheme(mode) {
+      if (!['auto','light','dark'].includes(mode)) mode = 'auto';
+      root.setAttribute('data-theme', mode);
+      try { localStorage.setItem('ifocus-theme', mode); } catch (e) {}
+      reflectButtons(mode);
+      // Refresh the theme-color meta to match resolved theme
+      let resolved = mode;
+      if (mode === 'auto') {
+        resolved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      }
+      const color = resolved === 'light' ? '#ffffff' : '#0e1420';
+      const m = document.querySelector('meta[name="theme-color"]:not([media])');
+      if (m) m.setAttribute('content', color);
+    }
+    function reflectButtons(mode) {
+      document.querySelectorAll('.theme-toggle button').forEach(btn => {
+        btn.setAttribute('aria-pressed', btn.dataset.themeSet === mode ? 'true' : 'false');
+      });
+    }
+    document.querySelectorAll('.theme-toggle button').forEach(btn => {
+      btn.addEventListener('click', () => setTheme(btn.dataset.themeSet));
+    });
+    let saved = 'auto';
+    try { saved = localStorage.getItem('ifocus-theme') || 'auto'; } catch (e) {}
+    reflectButtons(saved);
+  })();
+
+  /* ── Help modal ────────────────────────────────────────────── */
+  function openHelp()  { document.getElementById('helpModal').style.display = 'flex'; }
+  function closeHelp() { document.getElementById('helpModal').style.display = 'none'; }
+  document.getElementById('helpBtn').addEventListener('click', openHelp);
+  const mhb = document.getElementById('m-helpBtn'); if (mhb) mhb.addEventListener('click', openHelp);
+  document.getElementById('helpModal').addEventListener('click', (e) => {
+    if (e.target.id === 'helpModal') closeHelp();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHelp(); });
+
+  /* ── iOS "Add to Home Screen" hint ─────────────────────────── */
+  (function initInstallHint() {
+    const ua = navigator.userAgent;
+    const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    const dismissed = (() => { try { return localStorage.getItem('ifocus-install-dismissed') === '1'; } catch (e) { return false; } })();
+    if (isStandalone || dismissed) return;
+    const el = document.getElementById('installHint');
+    const titleEl = document.getElementById('installHintTitle');
+    const subEl = document.getElementById('installHintSub');
+    if (isIOS) {
+      titleEl.textContent = 'Install iFocus on your iPhone';
+      subEl.innerHTML = 'Tap <kbd>Share</kbd>, then <kbd>Add to Home Screen</kbd>.';
+    } else {
+      titleEl.textContent = 'Install iFocus';
+      subEl.innerHTML = 'Add to your home screen for a faster, full-screen experience.';
+    }
+    setTimeout(() => el.classList.add('visible'), 1500);
+  })();
+  function dismissInstallHint() {
+    document.getElementById('installHint').classList.remove('visible');
+    try { localStorage.setItem('ifocus-install-dismissed', '1'); } catch (e) {}
+  }
+
+  /* ── Service worker registration ───────────────────────────── */
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => { /* no-op: SW is progressive enhancement */ });
+    });
+  }
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
